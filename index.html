@@ -7,6 +7,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&family=Roboto:wght@300;400;500;700;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // aplica o tema salvo antes de qualquer coisa renderizar, senão a
+  // tela pisca com o tema padrão por um instante
+  try {
+    const temaSalvo = localStorage.getItem('fazenda-tema')
+    if (temaSalvo) document.documentElement.setAttribute('data-tema', temaSalvo)
+  } catch (e) {}
+</script>
 <style>
 :root{
   --bg:#12140f; --panel:#1a1d15; --surface2:#20241a; --line:#2b2f22; --line2:#383d2c;
@@ -14,6 +22,32 @@
   --serif:'Fraunces',serif; --sans:'Roboto',sans-serif;
   --rust:#a8623a; --gold:#c8a11a; --good-text:#5fae7d; --good-rgb:95,174,125;
   --warn-text:#d99a3d; --warn-rgb:217,154,61; --hover-bg:#242a1c;
+}
+/* Temas alternativos — trocados via data-tema no <html>, guardado no
+   navegador. Mesmo princípio de "skin" que o sistema Gefoscal usa. */
+html[data-tema="azul"]{
+  --bg:#0d1420; --panel:#141d2c; --surface2:#182335; --line:#232f45; --line2:#2e3d58;
+  --txt:#e6ecf5; --dim:#9aabc4; --dim2:#6d7c96;
+  --rust:#3e79b8; --gold:#4fa8c9; --good-text:#5fae7d; --good-rgb:95,174,125;
+  --warn-text:#d99a3d; --warn-rgb:217,154,61; --hover-bg:#1c2942;
+}
+html[data-tema="roxo"]{
+  --bg:#15111e; --panel:#1e1829; --surface2:#241d33; --line:#332943; --line2:#40355a;
+  --txt:#ece6f5; --dim:#b0a3c4; --dim2:#7d7096;
+  --rust:#7c4dbd; --gold:#a873d6; --good-text:#5fae7d; --good-rgb:95,174,125;
+  --warn-text:#d99a3d; --warn-rgb:217,154,61; --hover-bg:#2b2140;
+}
+html[data-tema="vermelho"]{
+  --bg:#1a0f0f; --panel:#241616; --surface2:#2c1a1a; --line:#3d2323; --line2:#4d2b2b;
+  --txt:#f5e6e6; --dim:#c49a9a; --dim2:#966d6d;
+  --rust:#c0392b; --gold:#d9773d; --good-text:#5fae7d; --good-rgb:95,174,125;
+  --warn-text:#e0a83d; --warn-rgb:224,168,61; --hover-bg:#331e1e;
+}
+html[data-tema="claro"]{
+  --bg:#f5f3ec; --panel:#ffffff; --surface2:#f0ede3; --line:#ddd8c8; --line2:#c9c3ac;
+  --txt:#241f14; --dim:#5c5540; --dim2:#8a8367;
+  --rust:#a8623a; --gold:#a9820f; --good-text:#2f7d51; --good-rgb:47,125,81;
+  --warn-text:#a5680a; --warn-rgb:165,104,10; --hover-bg:#e8e3d4;
 }
 *{box-sizing:border-box;}
 body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:14px;}
@@ -108,6 +142,16 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
     <div class="sub">Confinamento de gado</div>
     <div id="menu"></div>
     <div class="rodape-nav">
+      <div style="margin-bottom:10px;">
+        <label style="font-size:10px;color:var(--dim2);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px;">Tema</label>
+        <select id="sel-tema" style="width:100%;font-size:12px;padding:7px 9px;">
+          <option value="">Verde & Dourado</option>
+          <option value="azul">Azul</option>
+          <option value="roxo">Roxo</option>
+          <option value="vermelho">Vermelho</option>
+          <option value="claro">Claro</option>
+        </select>
+      </div>
       <button class="btn-secundario mini" id="btn-sair" style="width:100%;">Sair</button>
     </div>
   </nav>
