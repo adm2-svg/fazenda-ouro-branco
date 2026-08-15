@@ -169,6 +169,20 @@ function montarMenu () {
     else document.documentElement.removeAttribute('data-tema')
     localStorage.setItem('fazenda-tema', v)
   }
+
+  // menu no celular: painel deslizante, fecha sozinho ao escolher página
+  $('#btn-abrir-menu')?.addEventListener('click', () => {
+    $('.nav')?.classList.add('aberto')
+    $('#fundo-nav-mobile')?.classList.add('aberto')
+  })
+  $('#fundo-nav-mobile')?.addEventListener('click', () => {
+    $('.nav')?.classList.remove('aberto')
+    $('#fundo-nav-mobile')?.classList.remove('aberto')
+  })
+  $('#menu').addEventListener('click', () => {
+    $('.nav')?.classList.remove('aberto')
+    $('#fundo-nav-mobile')?.classList.remove('aberto')
+  })
 }
 function irPara (chave) {
   const p = PAGINAS[chave]
