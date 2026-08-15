@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fazenda Ouro Branco</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&family=Roboto:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{
+  --bg:#12140f; --panel:#1a1d15; --surface2:#20241a; --line:#2b2f22; --line2:#383d2c;
+  --txt:#ece7d8; --dim:#a9a793; --dim2:#7a7968;
+  --serif:'Fraunces',serif; --sans:'Roboto',sans-serif;
+  --rust:#a8623a; --gold:#c8a11a; --good-text:#5fae7d; --good-rgb:95,174,125;
+  --warn-text:#d99a3d; --warn-rgb:217,154,61; --hover-bg:#242a1c;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:14px;}
+h1,h2,h3{font-family:var(--serif);font-weight:600;}
+a{color:inherit;}
+input,select,textarea,button{font-family:inherit;font-size:14px;color:var(--txt);}
+input,select,textarea{background:var(--surface2);border:1px solid var(--line2);border-radius:7px;padding:9px 11px;width:100%;}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--rust);}
+.oculto{display:none!important;}
+.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh;}
+@media (max-width:820px){.app{grid-template-columns:1fr;} .nav{display:none;}}
+.nav{background:var(--panel);border-right:1px solid var(--line);padding:20px 14px;}
+.nav .logo{display:flex;align-items:center;gap:10px;margin-bottom:4px;}
+.nav .logo .icone{width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,var(--gold),#e6c85a);display:flex;align-items:center;justify-content:center;font-weight:900;color:#3a2e08;font-size:16px;flex:none;}
+.nav h1{font-size:17px;margin:0;line-height:1.15;}
+.nav .sub{color:var(--dim2);font-size:11px;margin:2px 0 22px;}
+.nav a{display:flex;align-items:center;gap:10px;padding:10px 11px;border-radius:7px;color:var(--dim);text-decoration:none;font-size:13.5px;margin-bottom:3px;cursor:pointer;}
+.nav a svg{width:17px;height:17px;flex:none;}
+.nav a:hover{background:var(--hover-bg);color:var(--txt);}
+.nav a.ativo{background:var(--hover-bg);color:var(--txt);border-left:3px solid var(--rust);}
+.nav .rodape-nav{margin-top:24px;padding-top:14px;border-top:1px solid var(--line);}
+.conteudo{padding:24px 28px;max-width:1400px;}
+.topo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:18px;}
+.topo h2{margin:0 0 4px;font-size:23px;}
+.topo p{margin:0;color:var(--dim2);font-size:13px;}
+.btn,.btn-secundario{border:0;border-radius:8px;padding:10px 16px;cursor:pointer;font-weight:600;font-size:13.5px;}
+.btn{background:var(--rust);color:#fff;}
+.btn:hover{filter:brightness(1.1);}
+.btn-secundario{background:var(--surface2);color:var(--txt);border:1px solid var(--line2);}
+.btn-secundario:hover{border-color:var(--rust);color:var(--rust);}
+.btn.mini,.btn-secundario.mini{padding:6px 10px;font-size:12px;}
+.btn:disabled{opacity:.6;cursor:not-allowed;}
+.resumo-topo{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px;}
+.bloco{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;}
+.bloco.alerta{border-color:var(--warn-text);}
+.bloco .rot{color:var(--dim2);font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;}
+.bloco .val{font-family:var(--serif);font-size:26px;margin-top:8px;}
+.bloco.alerta .val{color:var(--warn-text);}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;}
+.subabas{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;}
+.subabas button{border:1px solid var(--line2);background:var(--surface2);color:var(--dim);border-radius:20px;padding:8px 16px;font-size:12.5px;font-weight:600;cursor:pointer;}
+.subabas button.ativo{background:var(--rust);border-color:var(--rust);color:#fff;}
+.filtros{display:flex;gap:10px;flex-wrap:wrap;align-items:end;}
+.campo{display:flex;flex-direction:column;gap:5px;min-width:130px;}
+.campo label{font-size:11px;color:var(--dim2);text-transform:uppercase;letter-spacing:.04em;}
+.form-grade{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;}
+.acoes{display:flex;gap:10px;flex-wrap:wrap;}
+.tabela-scroll{overflow:auto;}
+table{width:100%;border-collapse:collapse;min-width:700px;}
+th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;font-size:13px;}
+th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;}
+.num{text-align:right;}
+.texto-dim{color:var(--dim);}
+.texto-dim2{color:var(--dim2);}
+.chip{display:inline-block;background:var(--surface2);border:1px solid var(--line2);border-radius:20px;padding:3px 10px;font-size:11px;}
+.badge-bom{background:rgba(var(--good-rgb),.15);color:var(--good-text);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600;}
+.badge-alerta{background:rgba(var(--warn-rgb),.18);color:var(--warn-text);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600;}
+.vazio{color:var(--dim2);padding:20px;text-align:center;}
+.cabeca-secao{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;}
+.modal-fundo{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:999;padding:16px;}
+.modal{background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:22px;max-width:820px;width:100%;max-height:90vh;overflow:auto;}
+.modal h3{margin:0 0 14px;font-size:18px;}
+.recado{margin-top:10px;padding:9px 12px;border:1px solid var(--line2);border-radius:8px;font-size:12.5px;}
+.passo{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border-radius:8px;margin-bottom:6px;font-size:13px;}
+#tela-login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+.login-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:32px;max-width:380px;width:100%;text-align:center;}
+.login-card .icone{width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,var(--gold),#e6c85a);display:flex;align-items:center;justify-content:center;font-weight:900;color:#3a2e08;font-size:24px;margin:0 auto 16px;}
+.login-card h1{font-size:20px;margin:0 0 4px;}
+.login-card p{color:var(--dim2);font-size:12.5px;margin:0 0 22px;}
+.login-card input{margin-bottom:10px;}
+.login-card .btn{width:100%;padding:12px;margin-top:6px;}
+.login-erro{color:var(--warn-text);font-size:12.5px;margin-top:10px;}
+</style>
+</head>
+<body>
+
+<div id="tela-login">
+  <div class="login-card">
+    <div class="icone">FO</div>
+    <h1>Fazenda Ouro Branco</h1>
+    <p>Confinamento — entrar com sua conta do Grupo Gefoscal</p>
+    <input type="email" id="lg-email" placeholder="e-mail">
+    <input type="password" id="lg-senha" placeholder="senha">
+    <button class="btn" id="lg-entrar">Entrar</button>
+    <div class="login-erro oculto" id="lg-erro"></div>
+  </div>
+</div>
+
+<div class="app oculto" id="app">
+  <nav class="nav">
+    <div class="logo"><div class="icone">FO</div><div><h1>Fazenda<br>Ouro Branco</h1></div></div>
+    <div class="sub">Confinamento de gado</div>
+    <div id="menu"></div>
+    <div class="rodape-nav">
+      <button class="btn-secundario mini" id="btn-sair" style="width:100%;">Sair</button>
+    </div>
+  </nav>
+  <main class="conteudo">
+    <div class="topo">
+      <div><h2 id="titulo-pagina">Visão geral</h2><p id="subtitulo-pagina"></p></div>
+    </div>
+    <div id="area"></div>
+  </main>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
