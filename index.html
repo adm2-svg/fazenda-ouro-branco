@@ -4,6 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fazenda Ouro Branco</title>
+
+<!-- PWA: deixa instalar como app no celular, sem passar por loja -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#12140f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Fazenda OB">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&family=Roboto:wght@300;400;500;700;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -152,6 +163,7 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
           <option value="claro">Claro</option>
         </select>
       </div>
+      <button class="btn-secundario mini oculto" id="btn-instalar" style="width:100%;margin-bottom:8px;">📲 Instalar app</button>
       <button class="btn-secundario mini" id="btn-sair" style="width:100%;">Sair</button>
     </div>
   </nav>

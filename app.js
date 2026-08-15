@@ -1590,3 +1590,28 @@ function formNfe (aoSalvar) {
     fechar(); aoSalvar()
   }
 }
+
+// ==================================================================
+// PWA — deixa instalar como app no celular, sem passar por loja
+// ==================================================================
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js').catch(() => {})
+  })
+}
+let promptInstalacao = null
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault()
+  promptInstalacao = e
+  document.getElementById('btn-instalar')?.classList.remove('oculto')
+})
+document.getElementById('btn-instalar')?.addEventListener('click', async () => {
+  if (!promptInstalacao) return
+  promptInstalacao.prompt()
+  await promptInstalacao.userChoice
+  promptInstalacao = null
+  document.getElementById('btn-instalar')?.classList.add('oculto')
+})
+window.addEventListener('appinstalled', () => {
+  document.getElementById('btn-instalar')?.classList.add('oculto')
+})
