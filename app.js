@@ -1920,7 +1920,6 @@ async function subConfigFiscal (alvo) {
     }
     resultado.innerHTML = `<div class="recado" style="border-color:var(--good-text);color:var(--good-text);"><b>${esc(data.mensagem)}</b></div>`
   }
-}
 
   $('#cfg-testar-cert').onclick = async () => {
     const resultado = $('#cfg-resultado-cert')
