@@ -78,6 +78,19 @@ function graficoPagoPendente (titulo, totalPago, totalPendente) {
     </div>
   </div>`
 }
+// barras com cor própria por item (ex: faixas de peso) — mesmo layout do
+// graficoBarras mas sem cor única fixa
+function graficoBarrasCores (titulo, dados) {
+  const max = Math.max(...dados.map(d => d.valor), 1)
+  return `<div class="cartao-grafico"><h4>${esc(titulo)}</h4>
+    ${dados.length ? dados.map(d => `
+      <div class="linha-grafico">
+        <div class="rotulo-grafico" title="${esc(d.rotulo)}">${esc(d.rotulo)}</div>
+        <div class="barra-fundo"><div class="barra-preenchida" style="width:${Math.max(2, d.valor / max * 100)}%;background:${d.cor};"></div></div>
+        <div class="valor-grafico">${d.sufixo ? d.valor + ' ' + d.sufixo : fmtNum(d.valor, 0)}</div>
+      </div>`).join('') : `<p class="texto-dim2" style="font-size:12.5px;">Sem dados.</p>`}
+  </div>`
+}
 
 // ==================================================================
 // LOGIN
@@ -321,13 +334,33 @@ async function paginaVisaoGeral () {
 async function paginaLotes () {
   $('#subtitulo-pagina').textContent = 'Cada lote é um grupo de animais — dele saem pesagem, trato, sanidade e receita'
   const area = $('#area')
-  area.innerHTML = `<p class="texto-dim2">carregando...</p>`
+  area.innerHTML = `
+    <div class="subabas">
+      <button data-sub="lista" class="ativo">Lotes</button>
+      <button data-sub="peso">Peso do rebanho</button>
+    </div>
+    <div id="sub-lotes"></div>`
+  area.querySelectorAll('.subabas button').forEach(b => {
+    b.onclick = () => {
+      area.querySelectorAll('.subabas button').forEach(x => x.classList.toggle('ativo', x === b))
+      abrirSubLotes(b.dataset.sub)
+    }
+  })
+  abrirSubLotes('lista')
+}
+function abrirSubLotes (sub) {
+  const alvo = $('#sub-lotes')
+  alvo.innerHTML = `<p class="texto-dim2">carregando...</p>`
+  if (sub === 'lista') subListaLotes(alvo)
+  if (sub === 'peso') subPesoRebanho(alvo)
+}
 
+async function subListaLotes (alvo) {
   const { data, error } = await db.from('fazenda_lote').select('*').order('data_entrada', { ascending: false })
-  if (error) { area.innerHTML = `<p class="vazio">${esc(error.message)}</p>`; return }
+  if (error) { alvo.innerHTML = `<p class="vazio">${esc(error.message)}</p>`; return }
   const lotes = data || []
 
-  area.innerHTML = `
+  alvo.innerHTML = `
     ${PERFIL.editavel ? `<div class="acoes" style="margin-bottom:16px;"><button class="btn" id="lt-novo">+ Novo lote</button></div>` : ''}
     <div class="panel" style="padding:0;"><div class="tabela-scroll">
       <table><thead><tr>
@@ -347,8 +380,111 @@ async function paginaLotes () {
       </tbody></table>
     </div></div>`
 
-  if (PERFIL.editavel) $('#lt-novo').onclick = () => formLote(null, () => paginaLotes())
-  area.querySelectorAll('[data-detalhe]').forEach(b => { b.onclick = () => paginaLoteDetalhe(b.dataset.detalhe) })
+  if (PERFIL.editavel) $('#lt-novo').onclick = () => formLote(null, () => subListaLotes(alvo))
+  alvo.querySelectorAll('[data-detalhe]').forEach(b => { b.onclick = () => paginaLoteDetalhe(b.dataset.detalhe) })
+}
+
+// ----- Peso do rebanho: distribuição por faixa + valor estimado por arroba -----
+const FAIXAS_PESO = [
+  { rotulo: '<100 kg', min: 0, max: 100, cor: '#c0392b' },
+  { rotulo: '100-150 kg', min: 100, max: 150, cor: '#e08a3c' },
+  { rotulo: '150-170 kg', min: 150, max: 170, cor: '#d9b21a' },
+  { rotulo: '170-200 kg', min: 170, max: 200, cor: '#4fae5f' },
+  { rotulo: '200-250 kg', min: 200, max: 250, cor: '#2f8f56' },
+  { rotulo: '250-300 kg', min: 250, max: 300, cor: '#3e79b8' },
+  { rotulo: '>300 kg', min: 300, max: Infinity, cor: '#8e5fc9' }
+]
+// preço e rendimento ficam fora da função pra sobreviver a re-render
+const paramsArroba = { precoArroba: 333, rendimentoPct: 50 }
+
+async function subPesoRebanho (alvo) {
+  const [{ data: lotes }, { data: pesagens }] = await Promise.all([
+    db.from('fazenda_lote').select('id,nome,pasto,status').eq('status', 'EM_CONFINAMENTO'),
+    db.from('fazenda_pesagem').select('lote_id,data,qtde_pesada,peso_medio').order('data', { ascending: false })
+  ])
+  const lotesAtivos = lotes || []
+  // pega só a pesagem mais recente de cada lote (a lista já vem ordenada por data desc)
+  const ultimaPorLote = {}
+  ;(pesagens || []).forEach(p => { if (!ultimaPorLote[p.lote_id]) ultimaPorLote[p.lote_id] = p })
+
+  const linhas = lotesAtivos
+    .map(l => ({ lote: l, pesagem: ultimaPorLote[l.id] }))
+    .filter(x => x.pesagem)
+
+  renderPesoRebanho(alvo, linhas)
+}
+
+function renderPesoRebanho (alvo, linhas) {
+  const buckets = FAIXAS_PESO.map(f => ({ ...f, qtde: 0 }))
+  let totalAnimais = 0, pesoVivoTotal = 0
+
+  linhas.forEach(({ pesagem }) => {
+    const qtde = Number(pesagem.qtde_pesada || 0)
+    const peso = Number(pesagem.peso_medio || 0)
+    totalAnimais += qtde
+    pesoVivoTotal += qtde * peso
+    const faixa = buckets.find(b => peso >= b.min && peso < b.max) || buckets[buckets.length - 1]
+    faixa.qtde += qtde
+  })
+
+  const pesoMedioGeral = totalAnimais ? pesoVivoTotal / totalAnimais : 0
+  const bucketAbate = buckets[buckets.length - 1] // >300kg
+  const { precoArroba, rendimentoPct } = paramsArroba
+  const arrobasTotais = pesoVivoTotal * (rendimentoPct / 100) / 15
+  const valorTotalEstimado = arrobasTotais * precoArroba
+  const arrobasAbate = bucketAbate.qtde && pesoVivoTotal ? (pesoVivoTotal / totalAnimais * bucketAbate.qtde) * (rendimentoPct / 100) / 15 : 0
+  // valor estimado só do grupo pronto pra abate (usa peso médio geral do grupo >300 — aproximação, já que só temos peso médio por lote)
+  const pesoMedioAbate = linhas.filter(x => Number(x.pesagem.peso_medio) >= 300)
+    .reduce((acc, x, _, arr) => acc + Number(x.pesagem.peso_medio) / arr.length, 0) || 0
+  const valorEstimadoAbate = bucketAbate.qtde * pesoMedioAbate * (rendimentoPct / 100) / 15 * precoArroba
+
+  alvo.innerHTML = `
+    <p class="texto-dim2" style="margin-bottom:14px;font-size:12.5px;">Baseado na pesagem mais recente de cada lote em confinamento (${linhas.length} de ${linhas.length} lote${linhas.length === 1 ? '' : 's'} com pesagem registrada). Cada barra soma a quantidade de animais dos lotes cuja média de peso cai naquela faixa.</p>
+
+    <div class="resumo-topo">
+      ${kpi('Animais considerados', fmtNum(totalAnimais, 0))}
+      ${kpi('Peso vivo total', fmtNum(pesoVivoTotal, 0) + ' kg')}
+      ${kpi('Peso médio geral', fmtNum(pesoMedioGeral, 1) + ' kg')}
+      ${kpi('Valor estimado do rebanho', 'R$ ' + fmtNum(valorTotalEstimado, 0))}
+    </div>
+
+    <div class="grade-graficos">
+      ${graficoBarrasCores('Distribuição por faixa de peso', buckets.map(b => ({ rotulo: b.rotulo, valor: b.qtde, cor: b.cor, sufixo: 'animais' })))}
+      <div class="cartao-grafico">
+        <h4>Prontos pra abate (>300 kg)</h4>
+        ${bucketAbate.qtde ? `
+          <div class="bloco alerta" style="margin-bottom:10px;"><div class="rot">Animais nessa faixa</div><div class="val">${fmtNum(bucketAbate.qtde, 0)}</div></div>
+          <p class="texto-dim" style="font-size:12.5px;margin:0 0 4px;">Peso médio do grupo: <b>${fmtNum(pesoMedioAbate, 1)} kg</b></p>
+          <p class="texto-dim" style="font-size:12.5px;margin:0 0 4px;">≈ ${fmtNum(arrobasAbate, 1)} arrobas de carcaça (rendimento ${rendimentoPct}%)</p>
+          <p class="texto-dim" style="font-size:13px;margin:8px 0 0;">Valor estimado: <b style="color:var(--good-text);">R$ ${fmtNum(valorEstimadoAbate, 0)}</b></p>
+        ` : `<p class="texto-dim2" style="font-size:12.5px;">Nenhum lote com média acima de 300 kg no momento.</p>`}
+      </div>
+    </div>
+
+    <div class="panel" style="padding:16px 18px;margin-bottom:16px;">
+      <div class="filtros">
+        <div class="campo"><label>Preço da arroba (R$)</label><input id="pr-arroba" inputmode="decimal" value="${paramsArroba.precoArroba}"></div>
+        <div class="campo"><label>Rendimento de carcaça (%)</label><input id="pr-rendimento" inputmode="decimal" value="${paramsArroba.rendimentoPct}"></div>
+        <button class="btn-secundario" id="pr-recalcular">Recalcular</button>
+      </div>
+      <p class="texto-dim2" style="font-size:11px;margin:10px 0 0;">Referência: R$ 333/@ à vista, boi gordo no Tocantins (Sul e Norte) — Scot Consultoria, 12/08/2026. O preço muda todo dia, ajuste pra cotação do dia antes de decidir. Rendimento de carcaça padrão de 50% é uma estimativa comum pra zebuínos — o valor real só é confirmado na balança do frigorífico.</p>
+    </div>
+
+    ${linhas.length ? `<div class="panel" style="padding:0;"><div class="tabela-scroll">
+      <table><thead><tr><th>Lote</th><th>Pasto</th><th>Última pesagem</th><th class="num">Qtde</th><th class="num">Peso médio</th><th class="num">GMD</th></tr></thead><tbody>
+        ${linhas.map(({ lote, pesagem }) => `<tr>
+          <td><b>${esc(lote.nome)}</b></td><td class="texto-dim">${esc(lote.pasto ?? '—')}</td>
+          <td class="texto-dim2">${fmtData(pesagem.data)}</td><td class="num">${fmtNum(pesagem.qtde_pesada, 0)}</td>
+          <td class="num">${fmtNum(pesagem.peso_medio, 1)} kg</td><td class="texto-dim2">${pesagem.gmd ? fmtNum(pesagem.gmd, 2) + ' kg/dia' : '—'}</td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div></div>` : `<p class="vazio">Nenhum lote em confinamento com pesagem registrada ainda.</p>`}`
+
+  $('#pr-recalcular').onclick = () => {
+    paramsArroba.precoArroba = numeroBR($('#pr-arroba').value) || 333
+    paramsArroba.rendimentoPct = numeroBR($('#pr-rendimento').value) || 50
+    renderPesoRebanho(alvo, linhas)
+  }
 }
 
 function formLote (l, aoSalvar) {
@@ -1747,7 +1883,73 @@ async function subConfigFiscal (alvo) {
       <p class="texto-dim2" style="font-size:11.5px;margin-top:14px;">
         Pra emissão funcionar de verdade, também precisa da chave do provedor (FAZENDA_NFE_TOKEN) configurada
         no Supabase pelo administrador — isso não fica aqui na tela, fica guardado com segurança do lado do servidor.</p>
+    </div>
+
+    <div class="panel" style="padding:20px;max-width:760px;margin-top:16px;">
+      <h3 style="font-size:15px;margin:0 0 6px;">Emissão própria — certificado digital</h3>
+      <p class="texto-dim2" style="font-size:12.5px;margin:0 0 14px;">Etapa 1: confirma que o certificado guardado nos secrets do Supabase abre certinho, antes de tentar montar e assinar uma nota de verdade.</p>
+      <button class="btn-secundario" id="cfg-testar-cert">Testar certificado</button>
+      <div id="cfg-resultado-cert" style="margin-top:14px;"></div>
+    </div>
+
+    <div class="panel" style="padding:20px;max-width:760px;margin-top:16px;">
+      <h3 style="font-size:15px;margin:0 0 6px;">Etapa 2 — conexão direta com a Sefaz (mTLS)</h3>
+      <p class="texto-dim2" style="font-size:12.5px;margin:0 0 14px;">Testa se dá pra abrir conexão apresentando o certificado direto pro webservice da Sefaz (SVRS/TO), sem provedor no meio. Só roda depois do teste de certificado acima dar certo.</p>
+      <button class="btn-secundario" id="cfg-testar-mtls">Testar conexão com a Sefaz</button>
+      <div id="cfg-resultado-mtls" style="margin-top:14px;"></div>
     </div>`
+
+  $('#cfg-testar-mtls').onclick = async () => {
+    const resultado = $('#cfg-resultado-mtls')
+    const btn = $('#cfg-testar-mtls')
+    btn.disabled = true; btn.textContent = 'Testando (pode levar alguns segundos)...'
+    resultado.innerHTML = ''
+    const { data, error } = await db.functions.invoke('fazenda-testar-mtls', { body: {} })
+    btn.disabled = false; btn.textContent = 'Testar conexão com a Sefaz'
+    if (error) {
+      resultado.innerHTML = `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">Erro ao chamar a função: ${esc(error.message)}</div>`
+      return
+    }
+    if (!data?.ok) {
+      resultado.innerHTML = `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">
+        <b>${esc(data?.erro ?? 'Falhou.')}</b>
+        ${data?.implicacao ? `<div style="margin-top:6px;">${esc(data.implicacao)}</div>` : ''}
+        ${data?.detalheTecnico ? `<div class="texto-dim2" style="margin-top:8px;font-size:11px;">${esc(data.detalheTecnico)}</div>` : ''}
+      </div>`
+      return
+    }
+    resultado.innerHTML = `<div class="recado" style="border-color:var(--good-text);color:var(--good-text);"><b>${esc(data.mensagem)}</b></div>`
+  }
+}
+
+  $('#cfg-testar-cert').onclick = async () => {
+    const resultado = $('#cfg-resultado-cert')
+    const btn = $('#cfg-testar-cert')
+    btn.disabled = true; btn.textContent = 'Testando...'
+    resultado.innerHTML = ''
+    const { data, error } = await db.functions.invoke('fazenda-testar-certificado', { body: {} })
+    btn.disabled = false; btn.textContent = 'Testar certificado'
+    if (error) {
+      resultado.innerHTML = `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">Erro ao chamar a função: ${esc(error.message)}</div>`
+      return
+    }
+    if (!data?.ok) {
+      resultado.innerHTML = `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">
+        <b>${esc(data?.erro ?? 'Falhou.')}</b>
+        ${data?.comoResolver ? `<div style="margin-top:6px;">${esc(data.comoResolver)}</div>` : ''}
+      </div>`
+      return
+    }
+    const c = data.certificado
+    resultado.innerHTML = `<div class="recado" style="border-color:var(--good-text);color:var(--good-text);">
+        <b>${esc(data.mensagem)}</b></div>
+      <div class="form-grade" style="margin-top:12px;">
+        <div class="campo"><label>Sujeito (dono do certificado)</label><div class="texto-dim" style="padding:9px 0;font-size:12.5px;">${esc(c.sujeito)}</div></div>
+        <div class="campo"><label>Emitido por</label><div class="texto-dim" style="padding:9px 0;font-size:12.5px;">${esc(c.emissor)}</div></div>
+        <div class="campo"><label>Válido até</label><div class="texto-dim" style="padding:9px 0;font-size:12.5px;">${fmtData(c.validoAte.slice(0, 10))} ${c.venceEmBreve ? '<span class="badge-alerta">vence em breve</span>' : '<span class="badge-bom">' + c.diasParaVencer + ' dias</span>'}</div></div>
+        <div class="campo"><label>Chave privada</label><div class="texto-dim" style="padding:9px 0;font-size:12.5px;">${c.temChavePrivada ? '<span class="badge-bom">presente</span>' : '<span class="badge-alerta">não encontrada</span>'}</div></div>
+      </div>`
+  }
 
   $('#cfg-salvar').onclick = async () => {
     const el = $('#cfg-recado')
