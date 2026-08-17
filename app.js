@@ -51,6 +51,34 @@ function kpi (rot, val, classe = '') {
   return `<div class="bloco ${classe}"><div class="rot">${esc(rot)}</div><div class="val">${val}</div></div>`
 }
 
+// ----- gráficos simples em HTML/CSS (sem lib externa, mesmo espírito
+// leve do resto do app) -----
+function graficoBarras (titulo, dados, corBarra = 'var(--rust)') {
+  const max = Math.max(...dados.map(d => d.valor), 1)
+  return `<div class="cartao-grafico"><h4>${esc(titulo)}</h4>
+    ${dados.length ? dados.map(d => `
+      <div class="linha-grafico">
+        <div class="rotulo-grafico" title="${esc(d.rotulo)}">${esc(d.rotulo)}</div>
+        <div class="barra-fundo"><div class="barra-preenchida" style="width:${Math.max(2, d.valor / max * 100)}%;background:${corBarra};"></div></div>
+        <div class="valor-grafico">R$ ${fmtNum(d.valor, 0)}</div>
+      </div>`).join('') : `<p class="texto-dim2" style="font-size:12.5px;">Sem lançamentos no período.</p>`}
+  </div>`
+}
+function graficoPagoPendente (titulo, totalPago, totalPendente) {
+  const soma = totalPago + totalPendente || 1
+  const pctPago = totalPago / soma * 100
+  return `<div class="cartao-grafico"><h4>${esc(titulo)}</h4>
+    <div class="barra-dupla">
+      <div style="width:${pctPago}%;background:var(--good-text);"></div>
+      <div style="width:${100 - pctPago}%;background:var(--warn-text);"></div>
+    </div>
+    <div class="legenda-dupla">
+      <span><i style="background:var(--good-text);"></i>Pago — R$ ${fmtNum(totalPago, 0)}</span>
+      <span><i style="background:var(--warn-text);"></i>Pendente — R$ ${fmtNum(totalPendente, 0)}</span>
+    </div>
+  </div>`
+}
+
 // ==================================================================
 // LOGIN
 // ==================================================================
@@ -795,7 +823,7 @@ function formNotaFiscal (preset, aoSalvar) {
       if (fundo.querySelector('#nf-gerar-fin').checked && valor > 0) {
         const { data: lanc, error: erroLanc } = await db.from('lancamento_financeiro').insert({
           data_lancamento: dataNf, tipo: tipoNf === 'ENTRADA' ? 'SAIDA' : 'ENTRADA',
-          centro_custo_id: FAZENDA_CENTRO_CUSTO_ID, valor, situacao: 'PLANEJADO',
+          centro_custo_id: FAZENDA_CENTRO_CUSTO_ID, valor, situacao: 'PENDENTE',
           descricao: `NF ${numeroNf ?? ''} — ${fornecedorCliente ?? 'sem fornecedor/cliente'}`.trim(),
           registrado_por: PERFIL.pessoaId
         }).select('id').single()
@@ -825,48 +853,145 @@ function formNotaFiscal (preset, aoSalvar) {
 // Fazenda Ouro Branco — mesma tabela do Gefoscal, nunca mistura)
 // ==================================================================
 async function paginaFinanceiro () {
-  $('#subtitulo-pagina').textContent = 'Lançamentos da fazenda — mesma base do Gefoscal, filtrada só pra cá'
+  $('#subtitulo-pagina').textContent = 'Despesas e receitas da fazenda — anexo de comprovante, fornecedor e situação de pagamento'
   const area = $('#area')
   area.innerHTML = `<div id="sub-fin"></div>`
   subLancamentos($('#sub-fin'))
 }
 
+// filtro fica fora da função pra sobreviver a re-render (troca de mês/situação/busca)
+const filtroFin = { mes: hojeISO().slice(0, 7), situacao: '', busca: '' }
+
 async function subLancamentos (alvo) {
-  const [{ data: lancs }, { data: contas }, { data: categorias }, { data: funcionarios }] = await Promise.all([
-    db.from('lancamento_financeiro').select('*, conta:conta_id(nome), categoria:categoria_id(nome), funcionario:fazenda_funcionario_id(nome)')
-      .eq('centro_custo_id', FAZENDA_CENTRO_CUSTO_ID).order('data_lancamento', { ascending: false }).limit(300),
+  const [{ data: contas }, { data: categorias }, { data: funcionarios }, { data: fornecedores }] = await Promise.all([
     db.from('conta_financeira').select('id,nome').order('nome'),
     db.from('categoria_financeira').select('id,nome').order('nome'),
-    db.from('fazenda_funcionario').select('id,nome').eq('ativo', true).order('nome')
+    db.from('fazenda_funcionario').select('id,nome').eq('ativo', true).order('nome'),
+    db.from('fazenda_fornecedor').select('id,nome').eq('ativo', true).order('nome')
   ])
   window.__FAZENDA_CONTAS = contas || []
   window.__FAZENDA_CATEGORIAS = categorias || []
   window.__FAZENDA_FUNCIONARIOS = funcionarios || []
-  const lista = lancs || []
-  const despesas = lista.filter(l => l.tipo === 'SAIDA').reduce((s, l) => s + Number(l.valor || 0), 0)
-  const receitas = lista.filter(l => l.tipo === 'ENTRADA').reduce((s, l) => s + Number(l.valor || 0), 0)
+  window.__FAZENDA_FORNECEDORES = fornecedores || []
+  await carregarLancamentos(alvo)
+}
+
+async function carregarLancamentos (alvo) {
+  alvo.innerHTML = `<p class="texto-dim2">carregando...</p>`
+
+  const [ano, mes] = filtroFin.mes.split('-').map(Number)
+  const dIni = `${filtroFin.mes}-01`
+  const dFim = new Date(ano, mes, 0).toISOString().slice(0, 10) // último dia do mês escolhido
+
+  let query = db.from('lancamento_financeiro')
+    .select('*, conta:conta_id(nome), categoria:categoria_id(nome), funcionario:fazenda_funcionario_id(nome), fornecedor:fornecedor_id(nome)')
+    .eq('centro_custo_id', FAZENDA_CENTRO_CUSTO_ID)
+    .gte('data_lancamento', dIni).lte('data_lancamento', dFim)
+  if (filtroFin.situacao) query = query.eq('situacao', filtroFin.situacao)
+  const { data: lancs, error } = await query.order('data_lancamento', { ascending: false }).limit(500)
+  if (error) { alvo.innerHTML = `<p class="vazio">${esc(error.message)}</p>`; return }
+
+  let lista = lancs || []
+  if (filtroFin.busca.trim()) {
+    const termo = filtroFin.busca.trim().toLowerCase()
+    lista = lista.filter(l =>
+      (l.descricao || '').toLowerCase().includes(termo) ||
+      (l.fornecedor?.nome || '').toLowerCase().includes(termo) ||
+      (l.funcionario?.nome || '').toLowerCase().includes(termo) ||
+      (l.categoria?.nome || '').toLowerCase().includes(termo))
+  }
+
+  const despesasArr = lista.filter(l => l.tipo === 'SAIDA')
+  const receitasArr = lista.filter(l => l.tipo === 'ENTRADA')
+  const despesas = despesasArr.reduce((s, l) => s + Number(l.valor || 0), 0)
+  const receitas = receitasArr.reduce((s, l) => s + Number(l.valor || 0), 0)
+  const despesasPagas = despesasArr.filter(l => l.situacao === 'EFETIVADO').reduce((s, l) => s + Number(l.valor || 0), 0)
+  const despesasPendentes = despesas - despesasPagas
+
+  const porCategoria = {}
+  despesasArr.forEach(l => {
+    const nome = l.categoria?.nome || 'Sem categoria'
+    porCategoria[nome] = (porCategoria[nome] || 0) + Number(l.valor || 0)
+  })
+  const dadosCategoria = Object.entries(porCategoria).map(([rotulo, valor]) => ({ rotulo, valor })).sort((a, b) => b.valor - a.valor).slice(0, 8)
+
+  const [anoTit, mesTit] = filtroFin.mes.split('-')
+  const nomeMes = new Date(Number(anoTit), Number(mesTit) - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
 
   alvo.innerHTML = `
     <div class="resumo-topo">
-      ${kpi('Despesas', 'R$ ' + fmtNum(despesas))}
-      ${kpi('Receitas', 'R$ ' + fmtNum(receitas))}
+      ${kpi('Despesas em ' + nomeMes, 'R$ ' + fmtNum(despesas))}
+      ${kpi('Receitas em ' + nomeMes, 'R$ ' + fmtNum(receitas))}
       ${kpi('Resultado', 'R$ ' + fmtNum(receitas - despesas))}
+      ${kpi('Despesas pendentes', 'R$ ' + fmtNum(despesasPendentes), despesasPendentes > 0 ? 'alerta' : '')}
     </div>
+
+    <div class="grade-graficos">
+      ${graficoBarras('Despesas por categoria', dadosCategoria)}
+      ${graficoPagoPendente('Despesas — pago x pendente', despesasPagas, despesasPendentes)}
+    </div>
+
+    <div class="panel" style="padding:16px 18px;margin-bottom:16px;">
+      <div class="filtros">
+        <div class="campo"><label>Mês</label><input type="month" id="fin-f-mes" value="${filtroFin.mes}"></div>
+        <div class="campo"><label>Situação</label><select id="fin-f-sit">
+          <option value="">Todas</option>
+          <option value="EFETIVADO" ${filtroFin.situacao === 'EFETIVADO' ? 'selected' : ''}>Pago</option>
+          <option value="PENDENTE" ${filtroFin.situacao === 'PENDENTE' ? 'selected' : ''}>Pendente</option>
+        </select></div>
+        <div class="campo" style="min-width:220px;"><label>Buscar por nome/descrição/categoria</label><input id="fin-f-busca" value="${esc(filtroFin.busca)}" placeholder="ex: veterinário, ração..."></div>
+      </div>
+    </div>
+
     ${PERFIL.editavel ? `<div class="acoes" style="margin-bottom:16px;"><button class="btn" id="fin-novo">+ Novo lançamento</button></div>` : ''}
     <div class="panel" style="padding:0;"><div class="tabela-scroll">
-      <table><thead><tr><th>Data</th><th>Tipo</th><th>Categoria</th><th>Conta</th><th>Funcionário/prestador</th><th>Descrição</th><th class="num">Valor</th><th>Situação</th></tr></thead><tbody>
+      <table><thead><tr><th>Data</th><th>Tipo</th><th>Categoria</th><th>Fornecedor</th><th>Descrição</th><th class="num">Valor</th><th>Situação</th><th>Comprovante</th>${PERFIL.editavel ? '<th></th>' : ''}</tr></thead><tbody>
         ${lista.map(l => `<tr>
           <td class="texto-dim2">${fmtData(l.data_lancamento)}</td>
           <td>${l.tipo === 'SAIDA' ? '<span class="badge-alerta">Saída</span>' : '<span class="badge-bom">Entrada</span>'}</td>
-          <td class="texto-dim2">${esc(l.categoria?.nome ?? '—')}</td><td class="texto-dim2">${esc(l.conta?.nome ?? '—')}</td>
-          <td class="texto-dim">${esc(l.funcionario?.nome ?? '—')}</td>
+          <td class="texto-dim2">${esc(l.categoria?.nome ?? '—')}</td>
+          <td class="texto-dim">${esc(l.fornecedor?.nome ?? l.funcionario?.nome ?? '—')}</td>
           <td>${esc(l.descricao ?? '—')}</td><td class="num">R$ ${fmtNum(l.valor)}</td>
-          <td>${l.situacao === 'EFETIVADO' ? '<span class="badge-bom">efetivado</span>' : '<span class="chip">pendente</span>'}</td>
-        </tr>`).join('') || `<tr><td colspan="8" class="vazio">Nenhum lançamento ainda.</td></tr>`}
+          <td>${l.situacao === 'EFETIVADO'
+              ? `<span class="badge-bom">pago${l.data_pagamento ? ' ' + fmtData(l.data_pagamento) : ''}</span>`
+              : (PERFIL.editavel ? `<button class="btn-secundario mini" data-marcar-pago="${l.id}">marcar pago</button>` : '<span class="chip">pendente</span>')}</td>
+          <td>${l.comprovante_caminho ? `<button class="btn-secundario mini" data-abrir-comp="${esc(l.comprovante_caminho)}">📎 ver</button>` : '<span class="texto-dim2">—</span>'}</td>
+          ${PERFIL.editavel ? `<td style="white-space:nowrap;"><button class="btn-secundario mini" data-editar-lanc="${l.id}">editar</button> <button class="btn-secundario mini" data-excluir-lanc="${l.id}">excluir</button></td>` : ''}
+        </tr>`).join('') || `<tr><td colspan="${PERFIL.editavel ? 9 : 8}" class="vazio">Nenhum lançamento nesse período/filtro.</td></tr>`}
       </tbody></table>
     </div></div>`
 
-  if (PERFIL.editavel) $('#fin-novo').onclick = () => formLancamento(() => subLancamentos(alvo))
+  $('#fin-f-mes').onchange = () => { filtroFin.mes = $('#fin-f-mes').value; carregarLancamentos(alvo) }
+  $('#fin-f-sit').onchange = () => { filtroFin.situacao = $('#fin-f-sit').value; carregarLancamentos(alvo) }
+  let temporizadorBusca
+  $('#fin-f-busca').oninput = () => {
+    clearTimeout(temporizadorBusca)
+    temporizadorBusca = setTimeout(() => { filtroFin.busca = $('#fin-f-busca').value; carregarLancamentos(alvo) }, 350)
+  }
+
+  alvo.querySelectorAll('[data-abrir-comp]').forEach(b => { b.onclick = () => abrirArquivo(b.dataset.abrirComp) })
+
+  if (PERFIL.editavel) {
+    $('#fin-novo').onclick = () => formLancamento(null, () => carregarLancamentos(alvo))
+    alvo.querySelectorAll('[data-editar-lanc]').forEach(b => {
+      b.onclick = () => formLancamento(lista.find(x => x.id === b.dataset.editarLanc), () => carregarLancamentos(alvo))
+    })
+    alvo.querySelectorAll('[data-excluir-lanc]').forEach(b => {
+      b.onclick = async () => {
+        if (!confirm('Excluir este lançamento? Não tem como desfazer.')) return
+        const { error } = await db.from('lancamento_financeiro').delete().eq('id', b.dataset.excluirLanc)
+        if (error) { alert('Não deu pra excluir: ' + error.message); return }
+        carregarLancamentos(alvo)
+      }
+    })
+    alvo.querySelectorAll('[data-marcar-pago]').forEach(b => {
+      b.onclick = async () => {
+        const { error } = await db.from('lancamento_financeiro').update({ situacao: 'EFETIVADO', data_pagamento: hojeISO() }).eq('id', b.dataset.marcarPago)
+        if (error) { alert('Não deu pra marcar como pago: ' + error.message); return }
+        carregarLancamentos(alvo)
+      }
+    })
+  }
 }
 
 // ----- Funcionários e Prestadores de Serviço -----
@@ -945,25 +1070,38 @@ function formFuncionario (registro, aoSalvar) {
   }
 }
 
-function formLancamento (aoSalvar) {
+function formLancamento (registro, aoSalvar) {
   const contas = window.__FAZENDA_CONTAS || []
   const categorias = window.__FAZENDA_CATEGORIAS || []
   const funcionarios = window.__FAZENDA_FUNCIONARIOS || []
+  const fornecedores = window.__FAZENDA_FORNECEDORES || []
   const fundo = document.createElement('div')
   fundo.className = 'modal-fundo'
   fundo.innerHTML = `<div class="modal">
-    <h3>Novo lançamento financeiro</h3>
+    <h3>${registro ? 'Editar' : 'Novo'} lançamento financeiro</h3>
     <div class="form-grade">
-      <div class="campo"><label>Data *</label><input type="date" id="fn-data" value="${hojeISO()}"></div>
-      <div class="campo"><label>Tipo</label><select id="fn-tipo"><option value="SAIDA">Saída (despesa)</option><option value="ENTRADA">Entrada (receita)</option></select></div>
-      <div class="campo"><label>Categoria</label><select id="fn-categoria"><option value="">—</option>${categorias.map(c => `<option value="${c.id}">${esc(c.nome)}</option>`).join('')}</select></div>
-      <div class="campo"><label>Conta</label><select id="fn-conta"><option value="">—</option>${contas.map(c => `<option value="${c.id}">${esc(c.nome)}</option>`).join('')}</select></div>
-      <div class="campo"><label>Funcionário/prestador (opcional)</label><select id="fn-funcionario"><option value="">—</option>${funcionarios.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}</select></div>
-      <div class="campo"><label>Valor (R$) *</label><input id="fn-valor" inputmode="decimal"></div>
-      <div class="campo"><label>Situação</label><select id="fn-situacao"><option value="PLANEJADO">Pendente</option><option value="EFETIVADO">Efetivado</option></select></div>
+      <div class="campo"><label>Data *</label><input type="date" id="fn-data" value="${registro?.data_lancamento ?? hojeISO()}"></div>
+      <div class="campo"><label>Tipo</label><select id="fn-tipo">
+        <option value="SAIDA" ${(!registro || registro.tipo === 'SAIDA') ? 'selected' : ''}>Saída (despesa)</option>
+        <option value="ENTRADA" ${registro?.tipo === 'ENTRADA' ? 'selected' : ''}>Entrada (receita)</option></select></div>
+      <div class="campo"><label>Categoria</label><select id="fn-categoria"><option value="">—</option>${categorias.map(c => `<option value="${c.id}" ${registro?.categoria_id === c.id ? 'selected' : ''}>${esc(c.nome)}</option>`).join('')}</select></div>
+      <div class="campo"><label>Conta</label><select id="fn-conta"><option value="">—</option>${contas.map(c => `<option value="${c.id}" ${registro?.conta_id === c.id ? 'selected' : ''}>${esc(c.nome)}</option>`).join('')}</select></div>
+      <div class="campo"><label>Fornecedor (opcional)</label><select id="fn-fornecedor"><option value="">—</option>${fornecedores.map(f => `<option value="${f.id}" ${registro?.fornecedor_id === f.id ? 'selected' : ''}>${esc(f.nome)}</option>`).join('')}</select></div>
+      <div class="campo"><label>Funcionário/prestador (opcional)</label><select id="fn-funcionario"><option value="">—</option>${funcionarios.map(f => `<option value="${f.id}" ${registro?.fazenda_funcionario_id === f.id ? 'selected' : ''}>${esc(f.nome)}</option>`).join('')}</select></div>
+      <div class="campo"><label>Valor (R$) *</label><input id="fn-valor" inputmode="decimal" value="${registro?.valor ?? ''}"></div>
+      <div class="campo"><label>Situação</label><select id="fn-situacao">
+        <option value="PENDENTE" ${(!registro || registro.situacao === 'PENDENTE') ? 'selected' : ''}>Pendente</option>
+        <option value="EFETIVADO" ${registro?.situacao === 'EFETIVADO' ? 'selected' : ''}>Pago</option></select></div>
+      <div class="campo" id="fn-campo-data-pagto"><label>Data do pagamento</label><input type="date" id="fn-data-pagto" value="${registro?.data_pagamento ?? ''}"></div>
     </div>
-    <div class="campo" style="margin-top:10px;"><label>Descrição *</label><input id="fn-descricao"></div>
-    <div class="campo" style="margin-top:10px;"><label>Observação</label><textarea id="fn-obs" style="min-height:60px;"></textarea></div>
+    <div class="campo" style="margin-top:10px;"><label>Descrição *</label><input id="fn-descricao" value="${esc(registro?.descricao ?? '')}"></div>
+    <div class="campo" style="margin-top:10px;"><label>Observação</label><textarea id="fn-obs" style="min-height:60px;">${esc(registro?.observacao ?? '')}</textarea></div>
+    <div class="campo" style="margin-top:10px;"><label>Comprovante (nota, boleto, recibo...)</label>
+      <input type="file" id="fn-comprovante">
+      ${registro?.comprovante_caminho ? `<div class="recado" style="margin-top:8px;">Anexo atual: <b>${esc(registro.comprovante_nome ?? 'comprovante')}</b> —
+        <button type="button" class="btn-secundario mini" id="fn-ver-comp">ver</button>
+        <label style="margin-left:8px;font-weight:400;"><input type="checkbox" id="fn-remover-comp"> remover anexo</label></div>` : ''}
+    </div>
     <div class="acoes" style="margin-top:14px;"><button class="btn" id="fn-salvar">Salvar</button>
       <button class="btn-secundario" id="fn-fechar">Fechar</button></div>
     <div class="recado oculto" id="fn-recado"></div>
@@ -972,6 +1110,13 @@ function formLancamento (aoSalvar) {
   const fechar = () => fundo.remove()
   fundo.querySelector('#fn-fechar').onclick = fechar
   fundo.onclick = e => { if (e.target === fundo) fechar() }
+  fundo.querySelector('#fn-ver-comp')?.addEventListener('click', () => abrirArquivo(registro.comprovante_caminho))
+
+  const alternarDataPagto = () => {
+    fundo.querySelector('#fn-campo-data-pagto').style.display = fundo.querySelector('#fn-situacao').value === 'EFETIVADO' ? '' : 'none'
+  }
+  fundo.querySelector('#fn-situacao').onchange = alternarDataPagto
+  alternarDataPagto()
 
   fundo.querySelector('#fn-salvar').onclick = async () => {
     const el = fundo.querySelector('#fn-recado')
@@ -980,14 +1125,33 @@ function formLancamento (aoSalvar) {
     const valor = numeroBR(fundo.querySelector('#fn-valor').value)
     if (!descricao) { aviso('Escreva a descrição.'); return }
     if (valor === null || valor <= 0) { aviso('Informe o valor.'); return }
+    const situacao = fundo.querySelector('#fn-situacao').value
     const btn = fundo.querySelector('#fn-salvar'); btn.disabled = true; btn.textContent = 'Salvando...'
-    const { error } = await db.from('lancamento_financeiro').insert({
+
+    let comprovanteCaminho = registro?.comprovante_caminho ?? null
+    let comprovanteNome = registro?.comprovante_nome ?? null
+    const removerComp = fundo.querySelector('#fn-remover-comp')?.checked
+    if (removerComp) { comprovanteCaminho = null; comprovanteNome = null }
+    const arquivoComp = fundo.querySelector('#fn-comprovante').files[0]
+    if (arquivoComp) {
+      try {
+        const enviado = await enviarArquivo(arquivoComp, 'fazenda-despesas-comprovantes')
+        comprovanteCaminho = enviado.caminho; comprovanteNome = enviado.nome
+      } catch (e) { aviso('Não deu pra enviar o comprovante: ' + e.message); btn.disabled = false; btn.textContent = 'Salvar'; return }
+    }
+
+    const corpo = {
       data_lancamento: fundo.querySelector('#fn-data').value, tipo: fundo.querySelector('#fn-tipo').value,
       categoria_id: fundo.querySelector('#fn-categoria').value || null, conta_id: fundo.querySelector('#fn-conta').value || null,
+      fornecedor_id: fundo.querySelector('#fn-fornecedor').value || null,
       fazenda_funcionario_id: fundo.querySelector('#fn-funcionario').value || null,
-      centro_custo_id: FAZENDA_CENTRO_CUSTO_ID, valor, situacao: fundo.querySelector('#fn-situacao').value,
-      descricao, observacao: fundo.querySelector('#fn-obs').value.trim() || null, registrado_por: PERFIL.pessoaId
-    })
+      valor, situacao, data_pagamento: situacao === 'EFETIVADO' ? (fundo.querySelector('#fn-data-pagto').value || hojeISO()) : null,
+      descricao, observacao: fundo.querySelector('#fn-obs').value.trim() || null,
+      comprovante_caminho: comprovanteCaminho, comprovante_nome: comprovanteNome
+    }
+    let error
+    if (registro) { ({ error } = await db.from('lancamento_financeiro').update(corpo).eq('id', registro.id)) }
+    else { ({ error } = await db.from('lancamento_financeiro').insert({ ...corpo, centro_custo_id: FAZENDA_CENTRO_CUSTO_ID, registrado_por: PERFIL.pessoaId })) }
     btn.disabled = false; btn.textContent = 'Salvar'
     if (error) { aviso(error.message); return }
     fechar(); aoSalvar()
@@ -1202,7 +1366,7 @@ function formContratoFazenda (aoSalvar) {
 // RELATÓRIOS  (filtro de datas, imprime/baixa)
 // ==================================================================
 async function paginaRelatorios () {
-  $('#subtitulo-pagina').textContent = 'Financeiro e vendas do período — pronto pra imprimir'
+  $('#subtitulo-pagina').textContent = 'Financeiro e vendas do período — filtre por mês, nome e situação, e imprima em PDF'
   const area = $('#area')
   const hoje = hojeISO()
   const de = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10)
@@ -1211,6 +1375,10 @@ async function paginaRelatorios () {
       <div class="filtros">
         <div class="campo"><label>De</label><input type="date" id="rl-de" value="${de}"></div>
         <div class="campo"><label>Até</label><input type="date" id="rl-ate" value="${hoje}"></div>
+        <div class="campo"><label>Situação</label><select id="rl-sit">
+          <option value="">Todas</option><option value="EFETIVADO">Paga</option><option value="PENDENTE">Pendente</option>
+        </select></div>
+        <div class="campo" style="min-width:200px;"><label>Nome (fornecedor/descrição)</label><input id="rl-busca" placeholder="ex: veterinário, ração..."></div>
         <button class="btn" id="rl-gerar">Gerar relatório</button>
       </div>
     </div>
@@ -1218,17 +1386,43 @@ async function paginaRelatorios () {
 
   const gerar = async () => {
     const dIni = $('#rl-de').value, dFim = $('#rl-ate').value
+    const situacao = $('#rl-sit').value
+    const busca = $('#rl-busca').value.trim().toLowerCase()
     $('#rl-conteudo').innerHTML = `<p class="texto-dim2">carregando...</p>`
+
+    let query = db.from('lancamento_financeiro').select('*, categoria:categoria_id(nome), fornecedor:fornecedor_id(nome)')
+      .eq('centro_custo_id', FAZENDA_CENTRO_CUSTO_ID).gte('data_lancamento', dIni).lte('data_lancamento', dFim)
+    if (situacao) query = query.eq('situacao', situacao)
     const [{ data: lancs }, { data: receitas }] = await Promise.all([
-      db.from('lancamento_financeiro').select('*').eq('centro_custo_id', FAZENDA_CENTRO_CUSTO_ID)
-        .gte('data_lancamento', dIni).lte('data_lancamento', dFim).order('data_lancamento'),
+      query.order('data_lancamento'),
       db.from('fazenda_receita').select('*, lote:lote_id(nome)').gte('data', dIni).lte('data', dFim).order('data')
     ])
-    const despesas = (lancs || []).filter(l => l.tipo === 'SAIDA')
-    const entradasFin = (lancs || []).filter(l => l.tipo === 'ENTRADA')
+
+    let lista = lancs || []
+    if (busca) {
+      lista = lista.filter(l => (l.descricao || '').toLowerCase().includes(busca) || (l.fornecedor?.nome || '').toLowerCase().includes(busca) || (l.categoria?.nome || '').toLowerCase().includes(busca))
+    }
+    const despesas = lista.filter(l => l.tipo === 'SAIDA')
+    const entradasFin = lista.filter(l => l.tipo === 'ENTRADA')
     const totalDespesas = despesas.reduce((s, l) => s + Number(l.valor || 0), 0)
+    const totalDespesasPagas = despesas.filter(l => l.situacao === 'EFETIVADO').reduce((s, l) => s + Number(l.valor || 0), 0)
     const totalEntradasFin = entradasFin.reduce((s, l) => s + Number(l.valor || 0), 0)
     const totalVendas = (receitas || []).reduce((s, r) => s + Number(r.valor_liquido || 0), 0)
+
+    // despesas por mês, pra ver tendência quando o período passa de 1 mês
+    const porMes = {}
+    despesas.forEach(l => {
+      const chave = String(l.data_lancamento).slice(0, 7)
+      porMes[chave] = (porMes[chave] || 0) + Number(l.valor || 0)
+    })
+    const dadosMes = Object.entries(porMes).sort(([a], [b]) => a.localeCompare(b))
+      .map(([chave, valor]) => {
+        const [a, m] = chave.split('-')
+        return { rotulo: new Date(Number(a), Number(m) - 1, 1).toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }), valor }
+      })
+    const porCategoria = {}
+    despesas.forEach(l => { const n = l.categoria?.nome || 'Sem categoria'; porCategoria[n] = (porCategoria[n] || 0) + Number(l.valor || 0) })
+    const dadosCategoria = Object.entries(porCategoria).map(([rotulo, valor]) => ({ rotulo, valor })).sort((a, b) => b.valor - a.valor).slice(0, 8)
 
     $('#rl-conteudo').innerHTML = `
       <div class="acoes" style="margin-bottom:14px;"><button class="btn-secundario" id="rl-imprimir">Baixar / imprimir PDF</button></div>
@@ -1239,11 +1433,20 @@ async function paginaRelatorios () {
           ${kpi('Vendas de gado', 'R$ ' + fmtNum(totalVendas))}
           ${kpi('Resultado', 'R$ ' + fmtNum(totalEntradasFin + totalVendas - totalDespesas))}
         </div>
-        <div class="cabeca-secao"><h3 style="font-size:15px;">Despesas (${fmtData(dIni)} a ${fmtData(dFim)})</h3></div>
+
+        <div class="grade-graficos">
+          ${graficoBarras('Despesas por mês', dadosMes, 'var(--gold)')}
+          ${graficoBarras('Despesas por categoria', dadosCategoria)}
+        </div>
+        ${graficoPagoPendente('Despesas — pago x pendente no período', totalDespesasPagas, totalDespesas - totalDespesasPagas)}
+
+        <div class="cabeca-secao" style="margin-top:18px;"><h3 style="font-size:15px;">Despesas (${fmtData(dIni)} a ${fmtData(dFim)})</h3></div>
         <div class="panel" style="padding:0;margin-bottom:18px;"><div class="tabela-scroll">
-          <table><thead><tr><th>Data</th><th>Descrição</th><th class="num">Valor</th></tr></thead><tbody>
-            ${despesas.map(l => `<tr><td class="texto-dim2">${fmtData(l.data_lancamento)}</td><td>${esc(l.descricao ?? '—')}</td><td class="num">R$ ${fmtNum(l.valor)}</td></tr>`).join('')
-              || `<tr><td colspan="3" class="vazio">Nenhuma despesa no período.</td></tr>`}
+          <table><thead><tr><th>Data</th><th>Fornecedor</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th><th>Situação</th></tr></thead><tbody>
+            ${despesas.map(l => `<tr><td class="texto-dim2">${fmtData(l.data_lancamento)}</td><td class="texto-dim">${esc(l.fornecedor?.nome ?? '—')}</td>
+              <td>${esc(l.descricao ?? '—')}</td><td class="texto-dim2">${esc(l.categoria?.nome ?? '—')}</td><td class="num">R$ ${fmtNum(l.valor)}</td>
+              <td>${l.situacao === 'EFETIVADO' ? '<span class="badge-bom">paga</span>' : '<span class="badge-alerta">pendente</span>'}</td></tr>`).join('')
+              || `<tr><td colspan="6" class="vazio">Nenhuma despesa no período/filtro.</td></tr>`}
           </tbody></table>
         </div></div>
         <div class="cabeca-secao"><h3 style="font-size:15px;">Vendas de gado (${fmtData(dIni)} a ${fmtData(dFim)})</h3></div>
@@ -1261,7 +1464,7 @@ async function paginaRelatorios () {
       janela.document.write(`<html><head><title>Relatório Fazenda Ouro Branco</title>
         <style>body{font-family:Arial,sans-serif;padding:24px;color:#222;} h2{margin-bottom:0;}
         table{width:100%;border-collapse:collapse;margin:14px 0 24px;} th,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px;}
-        th{background:#f0f0f0;} .num{text-align:right;}</style></head><body>
+        th{background:#f0f0f0;} .num{text-align:right;} .grade-graficos,.cartao-grafico,.barra-dupla,.legenda-dupla{display:none;}</style></head><body>
         <h2>Fazenda Ouro Branco — Relatório</h2><p>Período: ${fmtData(dIni)} a ${fmtData(dFim)}</p>
         ${$('#rl-imprimivel').innerHTML.replace(/<button[^>]*>.*?<\/button>/g, '')}
         </body></html>`)
