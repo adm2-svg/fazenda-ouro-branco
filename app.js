@@ -1018,17 +1018,19 @@ async function paginaCompras () {
   area.innerHTML = `
     <div class="acoes" style="margin-bottom:16px;"><button class="btn" id="cp-novo">+ Nova solicitação de compra</button></div>
     <div class="panel" style="padding:0;"><div class="tabela-scroll">
-      <table><thead><tr><th>Quando</th><th>Produto/serviço</th><th class="num">Qtde</th><th>Status</th><th class="num">Valor estimado</th></tr></thead><tbody>
+      <table><thead><tr><th>Quando</th><th>Produto/serviço</th><th class="num">Qtde</th><th>Status</th><th class="num">Valor estimado</th><th></th></tr></thead><tbody>
         ${lista.map(s => `<tr>
           <td class="texto-dim2">${fmtQuando(s.criado_em)}</td>
           <td>${esc(s.produto_servico)}</td>
           <td class="num">${s.quantidade ?? '—'} ${esc(s.unidade ?? '')}</td>
           <td><span class="${corStatus(s.status)}">${esc(ROTULO_STATUS[s.status] ?? s.status)}</span></td>
           <td class="num">${s.valor_estimado ? 'R$ ' + fmtNum(s.valor_estimado) : '—'}</td>
-        </tr>`).join('') || `<tr><td colspan="5" class="vazio">Nenhuma solicitação de compra ainda.</td></tr>`}
+          <td>${s.anexo_url ? `<button class="btn-secundario mini" data-abrir-anexo-cp="${esc(s.anexo_url)}">📎</button>` : '—'}</td>
+        </tr>`).join('') || `<tr><td colspan="6" class="vazio">Nenhuma solicitação de compra ainda.</td></tr>`}
       </tbody></table>
     </div></div>`
 
+  area.querySelectorAll('[data-abrir-anexo-cp]').forEach(b => { b.onclick = () => abrirArquivo(b.dataset.abrirAnexoCp) })
   $('#cp-novo').onclick = () => formCompraFazenda(() => paginaCompras())
 }
 
@@ -1038,14 +1040,18 @@ function formCompraFazenda (aoSalvar) {
   fundo.innerHTML = `<div class="modal">
     <h3>Nova solicitação de compra</h3>
     <div class="form-grade">
-      <div class="campo" style="grid-column:1/-1;"><label>Produto ou serviço *</label><input id="cp-produto"></div>
-      <div class="campo"><label>Quantidade</label><input id="cp-qtd"></div>
-      <div class="campo"><label>Unidade</label><input id="cp-unid" placeholder="un, kg, saco..."></div>
       <div class="campo"><label>Urgência</label><select id="cp-urg">
         <option value="NAO_URGENTE_5D">Normal — 5 dias</option><option value="URGENTE_4H">Urgente — 4 horas</option></select></div>
-      <div class="campo"><label>Valor estimado (R$)</label><input id="cp-valor" inputmode="decimal"></div>
-      <div class="campo"><label>Local de entrega</label><input id="cp-local" placeholder="Fazenda Ouro Branco"></div>
+      <div class="campo"><label>Valor estimado total (R$)</label><input id="cp-valor" inputmode="decimal"></div>
+      <div class="campo" style="grid-column:span 2;"><label>Local de entrega</label><input id="cp-local" placeholder="Fazenda Ouro Branco"></div>
     </div>
+    <div class="cabeca-secao" style="margin-top:14px;">
+      <h4 style="font-size:13px;margin:0;">Produtos/serviços</h4>
+      <button class="btn-secundario mini" id="cp-add-item" type="button">+ item</button>
+    </div>
+    <div id="cp-itens"></div>
+    <div class="campo" style="margin-top:12px;"><label>Anexo (cotação, ficha técnica, print...)</label>
+      <input type="file" id="cp-anexo"></div>
     <div class="acoes" style="margin-top:14px;"><button class="btn" id="cp-salvar">Enviar solicitação</button>
       <button class="btn-secundario" id="cp-fechar">Fechar</button></div>
     <div class="recado oculto" id="cp-recado"></div>
@@ -1055,19 +1061,61 @@ function formCompraFazenda (aoSalvar) {
   fundo.querySelector('#cp-fechar').onclick = fechar
   fundo.onclick = e => { if (e.target === fundo) fechar() }
 
+  const linhaItem = () => `<div class="form-grade item-cp" style="margin-bottom:8px;padding:10px;background:var(--surface2);border-radius:8px;">
+    <div class="campo" style="grid-column:span 2;"><label>Produto/serviço *</label><input class="ci-produto"></div>
+    <div class="campo"><label>Qtde</label><input class="ci-qtd"></div>
+    <div class="campo"><label>Unidade</label><input class="ci-unid" placeholder="un, kg, saco..."></div>
+    <button class="btn-secundario mini" type="button" data-remover-item-cp style="align-self:end;">remover</button>
+  </div>`
+  const addItem = () => {
+    const div = document.createElement('div')
+    div.innerHTML = linhaItem()
+    fundo.querySelector('#cp-itens').appendChild(div.firstElementChild)
+    fundo.querySelectorAll('[data-remover-item-cp]').forEach(b => {
+      b.onclick = () => { if (fundo.querySelectorAll('.item-cp').length > 1) b.closest('.item-cp').remove() }
+    })
+  }
+  fundo.querySelector('#cp-add-item').onclick = addItem
+  addItem()
+
   fundo.querySelector('#cp-salvar').onclick = async () => {
     const el = fundo.querySelector('#cp-recado')
     const aviso = t => { el.textContent = t; el.classList.remove('oculto'); el.style.borderColor = 'var(--warn-text)'; el.style.color = 'var(--warn-text)' }
-    const produto = fundo.querySelector('#cp-produto').value.trim()
-    if (!produto) { aviso('Escreva o produto ou serviço.'); return }
+    const itens = [...fundo.querySelectorAll('.item-cp')].map((div, i) => ({
+      produto_servico: div.querySelector('.ci-produto').value.trim(),
+      quantidade: div.querySelector('.ci-qtd').value.trim() || null,
+      unidade: div.querySelector('.ci-unid').value.trim() || null,
+      ordem: i
+    })).filter(it => it.produto_servico)
+    if (!itens.length) { aviso('Adicione ao menos um produto ou serviço.'); return }
+
     const btn = fundo.querySelector('#cp-salvar'); btn.disabled = true; btn.textContent = 'Enviando...'
-    const { error } = await db.from('solicitacao_compra').insert({
-      produto_servico: produto, quantidade: fundo.querySelector('#cp-qtd').value.trim() || null,
-      unidade: fundo.querySelector('#cp-unid').value.trim() || null, urgencia: fundo.querySelector('#cp-urg').value,
+
+    let anexoUrl = null, nomeAnexo = null
+    const arquivoAnexo = fundo.querySelector('#cp-anexo').files[0]
+    if (arquivoAnexo) {
+      try {
+        const enviado = await enviarArquivo(arquivoAnexo, 'fazenda-compras-anexos')
+        anexoUrl = enviado.caminho; nomeAnexo = enviado.nome
+      } catch (e) { aviso('Não deu pra enviar o anexo: ' + e.message); btn.disabled = false; btn.textContent = 'Enviar solicitação'; return }
+    }
+
+    const resumo = itens.length === 1 ? itens[0].produto_servico : `${itens.length} itens: ${itens.map(i => i.produto_servico).join(', ')}`
+    const { data: nova, error } = await db.from('solicitacao_compra').insert({
+      produto_servico: resumo.slice(0, 500),
+      quantidade: itens.length === 1 ? itens[0].quantidade : null,
+      unidade: itens.length === 1 ? itens[0].unidade : null,
+      anexo_url: anexoUrl, nome_anexo: nomeAnexo,
+      urgencia: fundo.querySelector('#cp-urg').value,
       valor_estimado: numeroBR(fundo.querySelector('#cp-valor').value), local_entrega: fundo.querySelector('#cp-local').value.trim() || 'Fazenda Ouro Branco',
       empresa_id: FAZENDA_EMPRESA_ID, solicitante_id: PERFIL.pessoaId,
       status: 'AGUARDANDO_COTACAO' // Fazenda não passa pela coordenação (isso é só de Indústria/P-TEC) — vai direto pro orçamento
-    })
+    }).select('id').single()
+
+    if (!error && nova?.id) {
+      await db.from('solicitacao_compra_item').insert(itens.map(it => ({ ...it, solicitacao_id: nova.id })))
+    }
+
     btn.disabled = false; btn.textContent = 'Enviar solicitação'
     if (error) { aviso(error.message); return }
     fechar(); aoSalvar()
