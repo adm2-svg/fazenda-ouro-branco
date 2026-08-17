@@ -155,9 +155,32 @@ const PAGINAS = {
   cadastro: { nome: 'Cadastro', render: paginaCadastroFazenda },
   relatorios: { nome: 'Relatórios', render: paginaRelatorios }
 }
+// grupos do menu — só organiza a exibição, item fora da lista cai
+// sozinho em "Outros" (defensivo, nunca some um item por engano)
+const GRUPOS_MENU = [
+  ['Operação', ['lotes', 'estoque']],
+  ['Financeiro', ['financeiro', 'compras', 'notas', 'fiscal', 'relatorios']],
+  ['Cadastro', ['contratos', 'cadastro']]
+]
+
 function montarMenu () {
-  $('#menu').innerHTML = Object.entries(PAGINAS).map(([chave, p]) =>
-    `<a data-chave="${chave}">${ICONES[chave]}<span>${esc(p.nome)}</span></a>`).join('')
+  const fixos = `<a data-chave="visao_geral">${ICONES.visao_geral}<span>${esc(PAGINAS.visao_geral.nome)}</span></a>`
+  const usadas = new Set(['visao_geral'])
+  let agrupado = ''
+  GRUPOS_MENU.forEach(([titulo, chaves]) => {
+    const itens = chaves.filter(c => PAGINAS[c])
+    if (!itens.length) return
+    itens.forEach(c => usadas.add(c))
+    agrupado += `<div class="grupo-titulo">${esc(titulo)}</div>` +
+      itens.map(c => `<a data-chave="${c}">${ICONES[c]}<span>${esc(PAGINAS[c].nome)}</span></a>`).join('')
+  })
+  const resto = Object.keys(PAGINAS).filter(c => !usadas.has(c))
+  if (resto.length) {
+    agrupado += `<div class="grupo-titulo">Outros</div>` +
+      resto.map(c => `<a data-chave="${c}">${ICONES[c]}<span>${esc(PAGINAS[c].nome)}</span></a>`).join('')
+  }
+
+  $('#menu').innerHTML = fixos + agrupado
   $('#menu').querySelectorAll('a').forEach(a => { a.onclick = () => irPara(a.dataset.chave) })
 
   // tema — aplica o salvo no seletor e liga a troca
