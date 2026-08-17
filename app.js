@@ -1690,6 +1690,8 @@ async function paginaFiscal () {
     <div class="subabas">
       <button data-sub="config" class="ativo">Configuração</button>
       <button data-sub="emitir">Notas emitidas</button>
+      <button data-sub="ativos">Ativos/Equipamentos</button>
+      <button data-sub="regras">Regras fiscais</button>
     </div>
     <div id="sub-fiscal"></div>`
   area.querySelectorAll('.subabas button').forEach(b => {
@@ -1705,6 +1707,8 @@ function abrirSubFiscal (sub) {
   alvo.innerHTML = `<p class="texto-dim2">carregando...</p>`
   if (sub === 'config') subConfigFiscal(alvo)
   if (sub === 'emitir') subNotasEmitidas(alvo)
+  if (sub === 'ativos') subAtivosImobilizados(alvo)
+  if (sub === 'regras') subRegrasFiscais(alvo)
 }
 
 // ----- Configuração fiscal (dados do emitente) -----
@@ -1875,6 +1879,196 @@ function formNfe (aoSalvar) {
       criado_por: PERFIL.pessoaId
     })
     btn.disabled = false; btn.textContent = 'Criar rascunho'
+    if (error) { aviso(error.message); return }
+    fechar(); aoSalvar()
+  }
+}
+
+// ----- Ativos/Equipamentos (bens do imobilizado disponíveis pra venda) -----
+async function subAtivosImobilizados (alvo) {
+  const [{ data: ativos }, { data: regras }] = await Promise.all([
+    db.from('fazenda_ativo_imobilizado').select('*, regra:regra_fiscal_id(nome, cfop_interno, situacao_icms)').order('criado_em', { ascending: false }),
+    db.from('fazenda_regra_fiscal').select('id,nome').eq('ativo', true).order('nome')
+  ])
+  window.__FAZENDA_REGRAS_FISCAIS = regras || []
+  const lista = ativos || []
+  const CHIP_STATUS = { DISPONIVEL: '<span class="chip">disponível</span>', VENDIDO: '<span class="badge-bom">vendido</span>', BAIXADO: '<span class="badge-alerta">baixado</span>' }
+
+  alvo.innerHTML = `
+    <p class="texto-dim2" style="margin-bottom:14px;font-size:12.5px;">Máquinas, equipamentos e veículos do ativo imobilizado da fazenda — disponíveis ou já vendidos, com a regra fiscal já vinculada pra usar na hora de emitir a nota.</p>
+    ${PERFIL.editavel ? `<div class="acoes" style="margin-bottom:16px;"><button class="btn" id="at-novo">+ Adicionar ativo</button></div>` : ''}
+    <div class="panel" style="padding:0;"><div class="tabela-scroll">
+      <table><thead><tr><th>Descrição</th><th>NCM</th><th>Regra fiscal</th><th class="num">Valor aquisição</th><th class="num">Valor venda</th><th>Status</th>${PERFIL.editavel ? '<th></th>' : ''}</tr></thead><tbody>
+        ${lista.map(a => `<tr>
+          <td><b>${esc(a.descricao)}</b>${a.numero_patrimonio ? `<div class="texto-dim2" style="font-size:11px;">patrim. ${esc(a.numero_patrimonio)}</div>` : ''}</td>
+          <td class="texto-dim2">${esc(a.ncm ?? '—')}</td>
+          <td class="texto-dim">${a.regra ? `${esc(a.regra.nome)} <span class="chip">CFOP ${esc(a.regra.cfop_interno)}</span>` : '<span class="texto-dim2">—</span>'}</td>
+          <td class="num">${a.valor_aquisicao ? 'R$ ' + fmtNum(a.valor_aquisicao) : '—'}</td>
+          <td class="num">${a.valor_venda ? 'R$ ' + fmtNum(a.valor_venda) : '—'}</td>
+          <td>${CHIP_STATUS[a.status] || esc(a.status)}</td>
+          ${PERFIL.editavel ? `<td><button class="btn-secundario mini" data-editar="${a.id}">editar</button></td>` : ''}
+        </tr>`).join('') || `<tr><td colspan="${PERFIL.editavel ? 7 : 6}" class="vazio">Nenhum ativo cadastrado ainda.</td></tr>`}
+      </tbody></table>
+    </div></div>`
+
+  if (PERFIL.editavel) {
+    $('#at-novo').onclick = () => formAtivoImobilizado(null, () => subAtivosImobilizados(alvo))
+    alvo.querySelectorAll('[data-editar]').forEach(b => {
+      b.onclick = () => formAtivoImobilizado(lista.find(x => x.id === b.dataset.editar), () => subAtivosImobilizados(alvo))
+    })
+  }
+}
+function formAtivoImobilizado (registro, aoSalvar) {
+  const regras = window.__FAZENDA_REGRAS_FISCAIS || []
+  const fundo = document.createElement('div')
+  fundo.className = 'modal-fundo'
+  fundo.innerHTML = `<div class="modal">
+    <h3>${registro ? 'Editar' : 'Novo'} ativo/equipamento</h3>
+    <div class="form-grade">
+      <div class="campo" style="grid-column:1/-1;"><label>Descrição *</label><input id="at-desc" value="${esc(registro?.descricao ?? '')}" placeholder="ex: Trator Massey Ferguson 275, ano 2015"></div>
+      <div class="campo"><label>NCM</label><input id="at-ncm" value="${esc(registro?.ncm ?? '')}" placeholder="ex: 87019000"></div>
+      <div class="campo"><label>Nº patrimônio</label><input id="at-patrim" value="${esc(registro?.numero_patrimonio ?? '')}"></div>
+      <div class="campo"><label>Regra fiscal</label><select id="at-regra"><option value="">—</option>${regras.map(r => `<option value="${r.id}" ${registro?.regra_fiscal_id === r.id ? 'selected' : ''}>${esc(r.nome)}</option>`).join('')}</select></div>
+      <div class="campo"><label>Status</label><select id="at-status">
+        <option value="DISPONIVEL" ${(!registro || registro.status === 'DISPONIVEL') ? 'selected' : ''}>Disponível</option>
+        <option value="VENDIDO" ${registro?.status === 'VENDIDO' ? 'selected' : ''}>Vendido</option>
+        <option value="BAIXADO" ${registro?.status === 'BAIXADO' ? 'selected' : ''}>Baixado</option>
+      </select></div>
+      <div class="campo"><label>Data de aquisição</label><input type="date" id="at-data-aq" value="${registro?.data_aquisicao ?? ''}"></div>
+      <div class="campo"><label>Valor de aquisição (R$)</label><input id="at-valor-aq" inputmode="decimal" value="${registro?.valor_aquisicao ?? ''}"></div>
+      <div class="campo"><label>Data da venda</label><input type="date" id="at-data-vd" value="${registro?.data_venda ?? ''}"></div>
+      <div class="campo"><label>Valor de venda (R$)</label><input id="at-valor-vd" inputmode="decimal" value="${registro?.valor_venda ?? ''}"></div>
+    </div>
+    <div class="campo" style="margin-top:10px;"><label>Observações</label><textarea id="at-obs" style="min-height:60px;">${esc(registro?.observacoes ?? '')}</textarea></div>
+    <div class="acoes" style="margin-top:14px;"><button class="btn" id="at-salvar">Salvar</button>
+      <button class="btn-secundario" id="at-fechar">Fechar</button></div>
+    <div class="recado oculto" id="at-recado"></div>
+  </div>`
+  document.body.appendChild(fundo)
+  const fechar = () => fundo.remove()
+  fundo.querySelector('#at-fechar').onclick = fechar
+  fundo.onclick = e => { if (e.target === fundo) fechar() }
+
+  fundo.querySelector('#at-salvar').onclick = async () => {
+    const el = fundo.querySelector('#at-recado')
+    const aviso = t => { el.textContent = t; el.classList.remove('oculto'); el.style.borderColor = 'var(--warn-text)'; el.style.color = 'var(--warn-text)' }
+    const descricao = fundo.querySelector('#at-desc').value.trim()
+    if (!descricao) { aviso('Escreva a descrição do ativo.'); return }
+    const btn = fundo.querySelector('#at-salvar'); btn.disabled = true; btn.textContent = 'Salvando...'
+    const corpo = {
+      descricao, ncm: fundo.querySelector('#at-ncm').value.trim() || null,
+      numero_patrimonio: fundo.querySelector('#at-patrim').value.trim() || null,
+      regra_fiscal_id: fundo.querySelector('#at-regra').value || null,
+      status: fundo.querySelector('#at-status').value,
+      data_aquisicao: fundo.querySelector('#at-data-aq').value || null,
+      valor_aquisicao: numeroBR(fundo.querySelector('#at-valor-aq').value),
+      data_venda: fundo.querySelector('#at-data-vd').value || null,
+      valor_venda: numeroBR(fundo.querySelector('#at-valor-vd').value),
+      observacoes: fundo.querySelector('#at-obs').value.trim() || null
+    }
+    let error
+    if (registro) { ({ error } = await db.from('fazenda_ativo_imobilizado').update(corpo).eq('id', registro.id)) }
+    else { ({ error } = await db.from('fazenda_ativo_imobilizado').insert({ ...corpo, criado_por: PERFIL.pessoaId })) }
+    btn.disabled = false; btn.textContent = 'Salvar'
+    if (error) { aviso(error.message); return }
+    fechar(); aoSalvar()
+  }
+}
+
+// ----- Regras fiscais (CFOP/CST/ICMS reutilizáveis por tipo de operação) -----
+async function subRegrasFiscais (alvo) {
+  const { data } = await db.from('fazenda_regra_fiscal').select('*').order('nome')
+  const lista = data || []
+  const ROTULO_SIT = { TRIBUTADO: 'Tributado', ISENTO: 'Isento', NAO_INCIDENCIA: 'Não incidência' }
+  const COR_SIT = s => s === 'TRIBUTADO' ? 'chip' : 'badge-bom'
+
+  alvo.innerHTML = `
+    <p class="texto-dim2" style="margin-bottom:14px;font-size:12.5px;">Enquadramentos fiscais prontos (CFOP/CST/ICMS) por tipo de operação — usados pra pré-preencher itens de ativos e notas, evitando erro de digitação na hora de emitir.</p>
+    ${PERFIL.editavel ? `<div class="acoes" style="margin-bottom:16px;"><button class="btn" id="rf-novo">+ Nova regra fiscal</button></div>` : ''}
+    <div class="panel" style="padding:0;"><div class="tabela-scroll">
+      <table><thead><tr><th>Nome</th><th>CFOP interno</th><th>CFOP interestadual</th><th>CST</th><th>Situação ICMS</th><th class="num">Alíquota</th>${PERFIL.editavel ? '<th></th>' : ''}</tr></thead><tbody>
+        ${lista.map(r => `<tr>
+          <td><b>${esc(r.nome)}</b>${!r.ativo ? ' <span class="chip">inativa</span>' : ''}${r.base_legal ? `<div class="texto-dim2" style="font-size:11px;">${esc(r.base_legal)}</div>` : ''}</td>
+          <td class="texto-dim">${esc(r.cfop_interno)}</td><td class="texto-dim">${esc(r.cfop_interestadual)}</td>
+          <td class="texto-dim2">${esc(r.cst_icms)}</td>
+          <td><span class="${COR_SIT(r.situacao_icms)}">${esc(ROTULO_SIT[r.situacao_icms] ?? r.situacao_icms)}</span></td>
+          <td class="num">${r.aliquota_icms ? fmtNum(r.aliquota_icms, 1) + '%' : '—'}</td>
+          ${PERFIL.editavel ? `<td><button class="btn-secundario mini" data-editar="${r.id}">editar</button></td>` : ''}
+        </tr>`).join('') || `<tr><td colspan="${PERFIL.editavel ? 7 : 6}" class="vazio">Nenhuma regra fiscal cadastrada ainda.</td></tr>`}
+      </tbody></table>
+    </div></div>`
+
+  if (PERFIL.editavel) {
+    $('#rf-novo').onclick = () => formRegraFiscal(null, () => subRegrasFiscais(alvo))
+    alvo.querySelectorAll('[data-editar]').forEach(b => {
+      b.onclick = () => formRegraFiscal(lista.find(x => x.id === b.dataset.editar), () => subRegrasFiscais(alvo))
+    })
+  }
+}
+function formRegraFiscal (registro, aoSalvar) {
+  const fundo = document.createElement('div')
+  fundo.className = 'modal-fundo'
+  fundo.innerHTML = `<div class="modal">
+    <h3>${registro ? 'Editar' : 'Nova'} regra fiscal</h3>
+    <div class="form-grade">
+      <div class="campo" style="grid-column:1/-1;"><label>Nome *</label><input id="rf-nome" value="${esc(registro?.nome ?? '')}" placeholder="ex: Venda de ativo imobilizado (equipamento/máquina)"></div>
+      <div class="campo"><label>Tipo de operação</label><select id="rf-tipo">
+        <option value="ATIVO_IMOBILIZADO" ${(!registro || registro.tipo_operacao === 'ATIVO_IMOBILIZADO') ? 'selected' : ''}>Venda de ativo imobilizado</option>
+        <option value="PRODUCAO_RURAL" ${registro?.tipo_operacao === 'PRODUCAO_RURAL' ? 'selected' : ''}>Venda de produção rural</option>
+        <option value="OUTRO" ${registro?.tipo_operacao === 'OUTRO' ? 'selected' : ''}>Outro</option>
+      </select></div>
+      <div class="campo"><label>NCM sugerido</label><input id="rf-ncm" value="${esc(registro?.ncm_sugerido ?? '')}"></div>
+      <div class="campo"><label>CFOP interno (TO) *</label><input id="rf-cfop-int" value="${esc(registro?.cfop_interno ?? '')}" placeholder="ex: 5551"></div>
+      <div class="campo"><label>CFOP interestadual *</label><input id="rf-cfop-ext" value="${esc(registro?.cfop_interestadual ?? '')}" placeholder="ex: 6551"></div>
+      <div class="campo"><label>CST ICMS *</label><input id="rf-cst" value="${esc(registro?.cst_icms ?? '')}" placeholder="ex: 41"></div>
+      <div class="campo"><label>Situação ICMS</label><select id="rf-situacao">
+        <option value="NAO_INCIDENCIA" ${(!registro || registro.situacao_icms === 'NAO_INCIDENCIA') ? 'selected' : ''}>Não incidência</option>
+        <option value="ISENTO" ${registro?.situacao_icms === 'ISENTO' ? 'selected' : ''}>Isento</option>
+        <option value="TRIBUTADO" ${registro?.situacao_icms === 'TRIBUTADO' ? 'selected' : ''}>Tributado</option>
+      </select></div>
+      <div class="campo"><label>Alíquota ICMS (%)</label><input id="rf-aliquota" inputmode="decimal" value="${registro?.aliquota_icms ?? 0}"></div>
+      <div class="campo"><label>Redução base de cálculo (%)</label><input id="rf-reducao" inputmode="decimal" value="${registro?.reducao_base_calculo_pct ?? 0}"></div>
+      <div class="campo"><label>Status</label><select id="rf-ativo">
+        <option value="true" ${(!registro || registro.ativo) ? 'selected' : ''}>Ativa</option>
+        <option value="false" ${(registro && !registro.ativo) ? 'selected' : ''}>Inativa</option>
+      </select></div>
+    </div>
+    <div class="campo" style="margin-top:10px;"><label>Base legal</label><input id="rf-base-legal" value="${esc(registro?.base_legal ?? '')}" placeholder="ex: LC 87/96, art. 3º; RICMS-TO"></div>
+    <div class="campo" style="margin-top:10px;"><label>Observação</label><textarea id="rf-obs" style="min-height:70px;">${esc(registro?.observacao ?? '')}</textarea></div>
+    <div class="acoes" style="margin-top:14px;"><button class="btn" id="rf-salvar">Salvar</button>
+      <button class="btn-secundario" id="rf-fechar">Fechar</button></div>
+    <div class="recado oculto" id="rf-recado"></div>
+  </div>`
+  document.body.appendChild(fundo)
+  const fechar = () => fundo.remove()
+  fundo.querySelector('#rf-fechar').onclick = fechar
+  fundo.onclick = e => { if (e.target === fundo) fechar() }
+
+  fundo.querySelector('#rf-salvar').onclick = async () => {
+    const el = fundo.querySelector('#rf-recado')
+    const aviso = t => { el.textContent = t; el.classList.remove('oculto'); el.style.borderColor = 'var(--warn-text)'; el.style.color = 'var(--warn-text)' }
+    const nome = fundo.querySelector('#rf-nome').value.trim()
+    const cfopInt = fundo.querySelector('#rf-cfop-int').value.trim()
+    const cfopExt = fundo.querySelector('#rf-cfop-ext').value.trim()
+    const cst = fundo.querySelector('#rf-cst').value.trim()
+    if (!nome) { aviso('Escreva o nome da regra.'); return }
+    if (!cfopInt || !cfopExt) { aviso('Informe os dois CFOPs (interno e interestadual).'); return }
+    if (!cst) { aviso('Informe o CST do ICMS.'); return }
+    const btn = fundo.querySelector('#rf-salvar'); btn.disabled = true; btn.textContent = 'Salvando...'
+    const corpo = {
+      nome, tipo_operacao: fundo.querySelector('#rf-tipo').value, ncm_sugerido: fundo.querySelector('#rf-ncm').value.trim() || null,
+      cfop_interno: cfopInt, cfop_interestadual: cfopExt, cst_icms: cst,
+      situacao_icms: fundo.querySelector('#rf-situacao').value,
+      aliquota_icms: numeroBR(fundo.querySelector('#rf-aliquota').value) ?? 0,
+      reducao_base_calculo_pct: numeroBR(fundo.querySelector('#rf-reducao').value) ?? 0,
+      base_legal: fundo.querySelector('#rf-base-legal').value.trim() || null,
+      observacao: fundo.querySelector('#rf-obs').value.trim() || null,
+      ativo: fundo.querySelector('#rf-ativo').value === 'true'
+    }
+    let error
+    if (registro) { ({ error } = await db.from('fazenda_regra_fiscal').update(corpo).eq('id', registro.id)) }
+    else { ({ error } = await db.from('fazenda_regra_fiscal').insert({ ...corpo, criado_por: PERFIL.pessoaId })) }
+    btn.disabled = false; btn.textContent = 'Salvar'
     if (error) { aviso(error.message); return }
     fechar(); aoSalvar()
   }
