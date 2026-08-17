@@ -1065,7 +1065,8 @@ function formCompraFazenda (aoSalvar) {
       produto_servico: produto, quantidade: fundo.querySelector('#cp-qtd').value.trim() || null,
       unidade: fundo.querySelector('#cp-unid').value.trim() || null, urgencia: fundo.querySelector('#cp-urg').value,
       valor_estimado: numeroBR(fundo.querySelector('#cp-valor').value), local_entrega: fundo.querySelector('#cp-local').value.trim() || 'Fazenda Ouro Branco',
-      empresa_id: FAZENDA_EMPRESA_ID, solicitante_id: PERFIL.pessoaId
+      empresa_id: FAZENDA_EMPRESA_ID, solicitante_id: PERFIL.pessoaId,
+      status: 'AGUARDANDO_COTACAO' // Fazenda não passa pela coordenação (isso é só de Indústria/P-TEC) — vai direto pro orçamento
     })
     btn.disabled = false; btn.textContent = 'Enviar solicitação'
     if (error) { aviso(error.message); return }
