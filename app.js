@@ -91,6 +91,46 @@ function graficoBarrasCores (titulo, dados) {
       </div>`).join('') : `<p class="texto-dim2" style="font-size:12.5px;">Sem dados.</p>`}
   </div>`
 }
+// donut simples via conic-gradient CSS — sem lib externa
+function graficoDonut (titulo, fatias) {
+  // fatias: [{ rotulo, valor, cor }]
+  const total = fatias.reduce((s, f) => s + f.valor, 0) || 1
+  let acc = 0
+  const stops = fatias.map(f => {
+    const de = acc / total * 100
+    acc += f.valor
+    const ate = acc / total * 100
+    return `${f.cor} ${de.toFixed(2)}% ${ate.toFixed(2)}%`
+  }).join(', ')
+  return `<div class="cartao-grafico"><h4>${esc(titulo)}</h4>
+    <div class="donut" style="background:conic-gradient(${stops});">
+      <div class="donut-centro"><b>${fmtNum(total, 0)}</b><span>total</span></div>
+    </div>
+    <div class="legenda-donut">${fatias.map(f => `<span><i style="background:${f.cor};"></i>${esc(f.rotulo)}: ${fmtNum(f.valor, 0)}</span>`).join('')}</div>
+  </div>`
+}
+// linha/área simples em SVG — pra distribuição cumulativa (sem lib externa)
+function graficoLinha (titulo, pontos, cor = 'var(--good-text)') {
+  const W = 560, H = 190, PAD_E = 34, PAD_D = 10, PAD_C = 14, PAD_B = 26
+  const largura = W - PAD_E - PAD_D
+  const altura = H - PAD_C - PAD_B
+  const passoX = pontos.length > 1 ? largura / (pontos.length - 1) : 0
+  const coords = pontos.map((p, i) => [PAD_E + i * passoX, PAD_C + altura - (p.y / 100) * altura])
+  const pathLinha = coords.map((c, i) => (i === 0 ? 'M' : 'L') + c[0].toFixed(1) + ',' + c[1].toFixed(1)).join(' ')
+  const pathArea = `${pathLinha} L${coords[coords.length - 1][0].toFixed(1)},${PAD_C + altura} L${coords[0][0].toFixed(1)},${PAD_C + altura} Z`
+  const passoRotulo = Math.max(1, Math.ceil(pontos.length / 6))
+  return `<div class="cartao-grafico"><h4>${esc(titulo)}</h4>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;">
+      <line x1="${PAD_E}" y1="${PAD_C}" x2="${PAD_E}" y2="${PAD_C + altura}" stroke="var(--line2)" stroke-width="1"/>
+      <line x1="${PAD_E}" y1="${PAD_C + altura}" x2="${W - PAD_D}" y2="${PAD_C + altura}" stroke="var(--line2)" stroke-width="1"/>
+      <text x="2" y="${PAD_C + 6}" font-size="9" fill="var(--dim2)">100%</text>
+      <text x="2" y="${PAD_C + altura}" font-size="9" fill="var(--dim2)">0%</text>
+      <path d="${pathArea}" fill="${cor}" opacity="0.14"></path>
+      <path d="${pathLinha}" fill="none" stroke="${cor}" stroke-width="2"></path>
+      ${coords.map((c, i) => i % passoRotulo === 0 ? `<text x="${c[0].toFixed(1)}" y="${H - 6}" font-size="9" fill="var(--dim2)" text-anchor="middle">${esc(pontos[i].xRotulo)}</text>` : '').join('')}
+    </svg>
+  </div>`
+}
 
 // ==================================================================
 // LOGIN
@@ -338,6 +378,7 @@ async function paginaLotes () {
     <div class="subabas">
       <button data-sub="lista" class="ativo">Lotes</button>
       <button data-sub="peso">Peso do rebanho</button>
+      <button data-sub="individual">Pesagem individual</button>
     </div>
     <div id="sub-lotes"></div>`
   area.querySelectorAll('.subabas button').forEach(b => {
@@ -353,6 +394,7 @@ function abrirSubLotes (sub) {
   alvo.innerHTML = `<p class="texto-dim2">carregando...</p>`
   if (sub === 'lista') subListaLotes(alvo)
   if (sub === 'peso') subPesoRebanho(alvo)
+  if (sub === 'individual') subPesagemIndividual(alvo)
 }
 
 async function subListaLotes (alvo) {
@@ -484,6 +526,164 @@ function renderPesoRebanho (alvo, linhas) {
     paramsArroba.precoArroba = numeroBR($('#pr-arroba').value) || 333
     paramsArroba.rendimentoPct = numeroBR($('#pr-rendimento').value) || 50
     renderPesoRebanho(alvo, linhas)
+  }
+}
+
+// ----- Pesagem individual (por animal — brinco ou S/N), com filtros e
+// atribuição de lote em massa pra quando a divisão por lote for conhecida -----
+const filtroPesInd = { busca: '', faixa: '', lote: '' }
+const selecaoPesInd = new Set()
+
+async function subPesagemIndividual (alvo) {
+  const [{ data: pesagens }, { data: lotes }] = await Promise.all([
+    db.from('fazenda_pesagem_individual').select('*, lote:lote_id(nome)').order('peso_kg', { ascending: false }),
+    db.from('fazenda_lote').select('id,nome').order('nome')
+  ])
+  window.__FAZENDA_PESAGENS_IND = pesagens || []
+  window.__FAZENDA_LOTES_FILTRO = lotes || []
+  renderPesagemIndividual(alvo)
+}
+
+function renderPesagemIndividual (alvo) {
+  const todos = window.__FAZENDA_PESAGENS_IND || []
+  const lotes = window.__FAZENDA_LOTES_FILTRO || []
+
+  let lista = todos
+  if (filtroPesInd.busca.trim()) {
+    const termo = filtroPesInd.busca.trim().toLowerCase()
+    lista = lista.filter(p => (p.id_brinco || '').toLowerCase().includes(termo) || (p.id_sn || '').toLowerCase().includes(termo))
+  }
+  if (filtroPesInd.faixa) {
+    const f = FAIXAS_PESO.find(x => x.rotulo === filtroPesInd.faixa)
+    if (f) lista = lista.filter(p => Number(p.peso_kg) >= f.min && Number(p.peso_kg) < f.max)
+  }
+  if (filtroPesInd.lote === '__sem_lote__') lista = lista.filter(p => !p.lote_id)
+  else if (filtroPesInd.lote) lista = lista.filter(p => p.lote_id === filtroPesInd.lote)
+
+  const pesos = lista.map(p => Number(p.peso_kg)).sort((a, b) => a - b)
+  const total = pesos.length
+  const soma = pesos.reduce((s, p) => s + p, 0)
+  const media = total ? soma / total : 0
+  const maximo = total ? pesos[total - 1] : 0
+  const minimo = total ? pesos[0] : 0
+  const variancia = total ? pesos.reduce((s, p) => s + (p - media) ** 2, 0) / total : 0
+  const desvio = Math.sqrt(variancia)
+  const percentil = p => total ? pesos[Math.min(total - 1, Math.floor(p / 100 * total))] : 0
+  const q1 = percentil(25), mediana = percentil(50), q3 = percentil(75)
+  const comBrinco = lista.filter(p => p.tipo_identificacao === 'Brinco').length
+  const semId = lista.filter(p => p.tipo_identificacao === 'S/N').length
+  const baixoPeso = lista.filter(p => Number(p.peso_kg) < 100).length
+  const altoPeso = lista.filter(p => Number(p.peso_kg) > 300).length
+
+  // histograma de 50 em 50 kg
+  const binsHist = [[0, 50], [50, 100], [100, 150], [150, 200], [200, 250], [250, 300], [300, 350], [350, Infinity]]
+  const dadosHist = binsHist.map(([min, max]) => ({
+    rotulo: max === Infinity ? '350+' : `${min}-${max}`,
+    valor: lista.filter(p => Number(p.peso_kg) >= min && Number(p.peso_kg) < max).length
+  }))
+
+  // distribuição por faixa (mesmas 7 faixas usadas no Peso do rebanho)
+  const dadosFaixa = FAIXAS_PESO.map(f => ({
+    rotulo: f.rotulo, cor: f.cor, sufixo: 'animais',
+    valor: lista.filter(p => Number(p.peso_kg) >= f.min && Number(p.peso_kg) < f.max).length
+  }))
+
+  // distribuição cumulativa — 12 pontos ao longo dos pesos ordenados
+  const pontosCumulativa = []
+  const nPontos = Math.min(12, total || 1)
+  for (let i = 0; i < nPontos; i++) {
+    const idx = Math.round(i / (nPontos - 1 || 1) * (total - 1))
+    pontosCumulativa.push({ xRotulo: fmtNum(pesos[idx] ?? 0, 0), y: total ? (idx + 1) / total * 100 : 0 })
+  }
+
+  alvo.innerHTML = `
+    <div class="panel" style="padding:16px 18px;margin-bottom:16px;">
+      <div class="filtros">
+        <div class="campo" style="min-width:200px;"><label>Buscar por brinco/ID</label><input id="pi-busca" value="${esc(filtroPesInd.busca)}" placeholder="digite o brinco ou SN..."></div>
+        <div class="campo"><label>Faixa de peso</label><select id="pi-faixa"><option value="">Todas as faixas</option>
+          ${FAIXAS_PESO.map(f => `<option value="${esc(f.rotulo)}" ${filtroPesInd.faixa === f.rotulo ? 'selected' : ''}>${esc(f.rotulo)}</option>`).join('')}</select></div>
+        <div class="campo"><label>Lote</label><select id="pi-lote"><option value="">Todos</option>
+          <option value="__sem_lote__" ${filtroPesInd.lote === '__sem_lote__' ? 'selected' : ''}>Sem lote atribuído</option>
+          ${lotes.map(l => `<option value="${l.id}" ${filtroPesInd.lote === l.id ? 'selected' : ''}>${esc(l.nome)}</option>`).join('')}</select></div>
+        <button class="btn-secundario" id="pi-limpar">Limpar filtros</button>
+      </div>
+    </div>
+
+    <div class="resumo-topo">
+      ${kpi('Total de animais', fmtNum(total, 0))}
+      ${kpi('Peso médio', fmtNum(media, 1) + ' kg', '')}
+      ${kpi('Peso máximo', fmtNum(maximo, 0) + ' kg')}
+      ${kpi('Desvio padrão', fmtNum(desvio, 1) + ' kg')}
+    </div>
+    <div class="resumo-topo">
+      ${kpi('3º Quartil (75%)', fmtNum(q3, 0) + ' kg')}
+      ${kpi('1º Quartil (25%)', fmtNum(q1, 0) + ' kg')}
+      ${kpi('Baixo peso (<100 kg)', fmtNum(baixoPeso, 0), baixoPeso > 0 ? 'alerta' : '')}
+      ${kpi('Alto peso (>300 kg)', fmtNum(altoPeso, 0))}
+    </div>
+
+    <div class="grade-graficos">
+      ${graficoBarras('Distribuição de peso (histograma)', dadosHist, 'var(--good-text)')}
+      ${graficoBarrasCores('Distribuição por faixa de peso', dadosFaixa)}
+    </div>
+    <div class="grade-graficos">
+      ${graficoDonut('Identificação dos animais', [
+        { rotulo: 'Com brinco', valor: comBrinco, cor: 'var(--good-text)' },
+        { rotulo: 'Sem ID (S/N)', valor: semId, cor: 'var(--warn-text)' }
+      ])}
+      ${graficoLinha('Distribuição cumulativa de peso', pontosCumulativa)}
+    </div>
+
+    ${PERFIL.editavel ? `<div class="panel" style="padding:14px 18px;margin-bottom:16px;">
+      <div class="filtros">
+        <span class="texto-dim2" style="font-size:12.5px;">${selecaoPesInd.size} selecionado(s)</span>
+        <div class="campo"><label>Atribuir ao lote</label><select id="pi-atribuir-lote"><option value="">Escolha um lote</option>
+          ${lotes.map(l => `<option value="${l.id}">${esc(l.nome)}</option>`).join('')}</select></div>
+        <button class="btn" id="pi-atribuir-aplicar">Aplicar aos selecionados</button>
+        <button class="btn-secundario" id="pi-selecionar-todos">Selecionar todos os filtrados (${lista.length})</button>
+        <button class="btn-secundario" id="pi-limpar-selecao">Limpar seleção</button>
+      </div>
+    </div>` : ''}
+
+    <div class="panel" style="padding:0;"><div class="tabela-scroll">
+      <table><thead><tr>${PERFIL.editavel ? '<th></th>' : ''}<th>Identificação</th><th>Tipo</th><th class="num">Peso</th><th>Faixa</th><th>Lote</th></tr></thead><tbody>
+        ${lista.slice(0, 500).map(p => `<tr>
+          ${PERFIL.editavel ? `<td><input type="checkbox" class="pi-check" data-id="${p.id}" ${selecaoPesInd.has(p.id) ? 'checked' : ''}></td>` : ''}
+          <td><b>${esc(p.id_brinco || p.id_sn || '—')}</b></td>
+          <td>${p.tipo_identificacao === 'Brinco' ? '<span class="badge-bom">Brinco</span>' : '<span class="chip">S/N</span>'}</td>
+          <td class="num">${fmtNum(p.peso_kg, 1)} kg</td>
+          <td class="texto-dim2">${esc((FAIXAS_PESO.find(f => Number(p.peso_kg) >= f.min && Number(p.peso_kg) < f.max) || {}).rotulo ?? '—')}</td>
+          <td class="texto-dim">${p.lote?.nome ? esc(p.lote.nome) : '<span class="texto-dim2">sem lote</span>'}</td>
+        </tr>`).join('') || `<tr><td colspan="${PERFIL.editavel ? 6 : 5}" class="vazio">Nenhum animal encontrado com esse filtro.</td></tr>`}
+      </tbody></table>
+      ${lista.length > 500 ? `<p class="texto-dim2" style="padding:12px 16px;font-size:11.5px;">Mostrando os primeiros 500 de ${lista.length} — refine o filtro pra ver o resto.</p>` : ''}
+    </div></div>`
+
+  $('#pi-busca').oninput = (() => {
+    let t
+    return () => { clearTimeout(t); t = setTimeout(() => { filtroPesInd.busca = $('#pi-busca').value; renderPesagemIndividual(alvo) }, 300) }
+  })()
+  $('#pi-faixa').onchange = () => { filtroPesInd.faixa = $('#pi-faixa').value; renderPesagemIndividual(alvo) }
+  $('#pi-lote').onchange = () => { filtroPesInd.lote = $('#pi-lote').value; renderPesagemIndividual(alvo) }
+  $('#pi-limpar').onclick = () => { filtroPesInd.busca = ''; filtroPesInd.faixa = ''; filtroPesInd.lote = ''; renderPesagemIndividual(alvo) }
+
+  if (PERFIL.editavel) {
+    alvo.querySelectorAll('.pi-check').forEach(cb => {
+      cb.onchange = () => { cb.checked ? selecaoPesInd.add(cb.dataset.id) : selecaoPesInd.delete(cb.dataset.id); renderPesagemIndividual(alvo) }
+    })
+    $('#pi-selecionar-todos').onclick = () => { lista.forEach(p => selecaoPesInd.add(p.id)); renderPesagemIndividual(alvo) }
+    $('#pi-limpar-selecao').onclick = () => { selecaoPesInd.clear(); renderPesagemIndividual(alvo) }
+    $('#pi-atribuir-aplicar').onclick = async () => {
+      const loteId = $('#pi-atribuir-lote').value
+      if (!loteId) { alert('Escolha um lote antes de aplicar.'); return }
+      if (!selecaoPesInd.size) { alert('Selecione ao menos um animal.'); return }
+      const btn = $('#pi-atribuir-aplicar'); btn.disabled = true; btn.textContent = 'Aplicando...'
+      const { error } = await db.from('fazenda_pesagem_individual').update({ lote_id: loteId }).in('id', [...selecaoPesInd])
+      btn.disabled = false; btn.textContent = 'Aplicar aos selecionados'
+      if (error) { alert('Não deu pra atribuir: ' + error.message); return }
+      selecaoPesInd.clear()
+      subPesagemIndividual(alvo)
+    }
   }
 }
 
