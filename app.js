@@ -2219,7 +2219,41 @@ async function subConfigFiscal (alvo) {
       <p class="texto-dim2" style="font-size:12.5px;margin:0 0 14px;">Testa se dá pra abrir conexão apresentando o certificado direto pro webservice da Sefaz (SVRS/TO), sem provedor no meio. Só roda depois do teste de certificado acima dar certo.</p>
       <button class="btn-secundario" id="cfg-testar-mtls">Testar conexão com a Sefaz</button>
       <div id="cfg-resultado-mtls" style="margin-top:14px;"></div>
+    </div>
+
+    <div class="panel" style="padding:20px;max-width:760px;margin-top:16px;">
+      <h3 style="font-size:15px;margin:0 0 6px;">Etapa 2.5 — status do serviço (chamada de verdade)</h3>
+      <p class="texto-dim2" style="font-size:12.5px;margin:0 0 14px;">Chama de verdade o webservice de status da Sefaz — sem precisar assinar XML. Confirma que TLS + SOAP + resposta funcionam ponta a ponta antes de partir pra parte pesada (montar e assinar a nota).</p>
+      <button class="btn-secundario" id="cfg-testar-status">Consultar status da Sefaz</button>
+      <div id="cfg-resultado-status" style="margin-top:14px;"></div>
     </div>`
+
+  $('#cfg-testar-status').onclick = async () => {
+    const resultado = $('#cfg-resultado-status')
+    const btn = $('#cfg-testar-status')
+    btn.disabled = true; btn.textContent = 'Consultando...'
+    resultado.innerHTML = ''
+    const { data, error } = await db.functions.invoke('fazenda-status-sefaz', { body: {} })
+    btn.disabled = false; btn.textContent = 'Consultar status da Sefaz'
+    if (error) {
+      resultado.innerHTML = `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">Erro ao chamar a função: ${esc(error.message)}</div>`
+      return
+    }
+    if (!data?.ok && !data?.cStat) {
+      resultado.innerHTML = `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">
+        <b>${esc(data?.erro ?? 'Falhou.')}</b>
+        ${data?.detalheTecnico ? `<div class="texto-dim2" style="margin-top:8px;font-size:11px;">${esc(data.detalheTecnico)}</div>` : ''}
+      </div>`
+      return
+    }
+    resultado.innerHTML = `<div class="recado" style="border-color:${data.servicoOperando ? 'var(--good-text)' : 'var(--warn-text)'};color:${data.servicoOperando ? 'var(--good-text)' : 'var(--warn-text)'};">
+        <b>cStat ${esc(data.cStat ?? '—')}: ${esc(data.xMotivo ?? 'sem motivo na resposta')}</b>
+        <div style="margin-top:4px;">${data.servicoOperando ? 'Serviço em operação — comunicação completa funcionando!' : 'Resposta recebida, mas não é "em operação" — confira o motivo acima.'}</div>
+      </div>
+      <details style="margin-top:10px;"><summary class="texto-dim2" style="font-size:11.5px;cursor:pointer;">ver resposta bruta da Sefaz</summary>
+        <pre style="white-space:pre-wrap;font-size:10.5px;color:var(--dim);margin-top:8px;">${esc(data.respostaBruta ?? '')}</pre>
+      </details>`
+  }
 
   $('#cfg-testar-mtls').onclick = async () => {
     const resultado = $('#cfg-resultado-mtls')
