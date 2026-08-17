@@ -2236,7 +2236,13 @@ async function subConfigFiscal (alvo) {
     const { data, error } = await db.functions.invoke('fazenda-status-sefaz', { body: {} })
     btn.disabled = false; btn.textContent = 'Consultar status da Sefaz'
     if (error) {
-      resultado.innerHTML = `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">Erro ao chamar a função: ${esc(error.message)}</div>`
+      let detalhe = null
+      if (error?.context?.json) { try { detalhe = await error.context.json() } catch {} }
+      resultado.innerHTML = `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">
+        <b>${esc(detalhe?.erro ?? error.message)}</b>
+        ${detalhe?.detalheTecnico ? `<div class="texto-dim2" style="margin-top:8px;font-size:11px;">${esc(detalhe.detalheTecnico)}</div>` : ''}
+        ${detalhe?.etapa ? `<div class="texto-dim2" style="margin-top:4px;font-size:11px;">etapa: ${esc(detalhe.etapa)}</div>` : ''}
+      </div>`
       return
     }
     if (!data?.ok && !data?.cStat) {
@@ -2263,7 +2269,13 @@ async function subConfigFiscal (alvo) {
     const { data, error } = await db.functions.invoke('fazenda-testar-mtls', { body: {} })
     btn.disabled = false; btn.textContent = 'Testar conexão com a Sefaz'
     if (error) {
-      resultado.innerHTML = `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">Erro ao chamar a função: ${esc(error.message)}</div>`
+      let detalhe = null
+      if (error?.context?.json) { try { detalhe = await error.context.json() } catch {} }
+      resultado.innerHTML = `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">
+        <b>${esc(detalhe?.erro ?? error.message)}</b>
+        ${detalhe?.implicacao ? `<div style="margin-top:6px;">${esc(detalhe.implicacao)}</div>` : ''}
+        ${detalhe?.detalheTecnico ? `<div class="texto-dim2" style="margin-top:8px;font-size:11px;">${esc(detalhe.detalheTecnico)}</div>` : ''}
+      </div>`
       return
     }
     if (!data?.ok) {
@@ -2285,7 +2297,12 @@ async function subConfigFiscal (alvo) {
     const { data, error } = await db.functions.invoke('fazenda-testar-certificado', { body: {} })
     btn.disabled = false; btn.textContent = 'Testar certificado'
     if (error) {
-      resultado.innerHTML = `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">Erro ao chamar a função: ${esc(error.message)}</div>`
+      let detalhe = null
+      if (error?.context?.json) { try { detalhe = await error.context.json() } catch {} }
+      resultado.innerHTML = `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">
+        <b>${esc(detalhe?.erro ?? error.message)}</b>
+        ${detalhe?.comoResolver ? `<div style="margin-top:6px;">${esc(detalhe.comoResolver)}</div>` : ''}
+      </div>`
       return
     }
     if (!data?.ok) {
