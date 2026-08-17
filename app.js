@@ -307,12 +307,13 @@ async function paginaVisaoGeral () {
   area.innerHTML = `<p class="texto-dim2">carregando...</p>`
 
   const hoje = hojeISO()
-  const [{ data: lotes }, { data: financeiro }, { data: receitas }, { data: pesagens }, { data: sanidade }] = await Promise.all([
+  const [{ data: lotes }, { data: financeiro }, { data: receitas }, { data: pesagens }, { data: sanidade }, { data: pesInd }] = await Promise.all([
     db.from('fazenda_lote').select('id,nome,status,qtde_inicial'),
     db.from('lancamento_financeiro').select('tipo,valor,situacao,data_lancamento').eq('centro_custo_id', FAZENDA_CENTRO_CUSTO_ID),
     db.from('fazenda_receita').select('valor_liquido'),
     db.from('fazenda_pesagem').select('lote_id,peso_medio,data').order('data', { ascending: false }),
-    db.from('fazenda_sanidade').select('id,produto,proxima_aplicacao,lote:lote_id(nome)').not('proxima_aplicacao', 'is', null)
+    db.from('fazenda_sanidade').select('id,produto,proxima_aplicacao,lote:lote_id(nome)').not('proxima_aplicacao', 'is', null),
+    db.from('fazenda_pesagem_individual').select('peso_kg,lote_id')
   ])
 
   const despesas = (financeiro || []).filter(f => f.tipo === 'SAIDA').reduce((s, f) => s + Number(f.valor || 0), 0)
@@ -332,6 +333,19 @@ async function paginaVisaoGeral () {
     .sort((a, b) => (a.data_lancamento || '') < (b.data_lancamento || '') ? -1 : 1)
   const vacinasProximas = (sanidade || []).filter(s => s.proxima_aplicacao && s.proxima_aplicacao <= new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10))
     .sort((a, b) => a.proxima_aplicacao < b.proxima_aplicacao ? -1 : 1)
+
+  // resumo da pesagem individual (por animal — brinco/S/N), separado da
+  // pesagem por lote que já entra nos KPIs acima
+  const listaPesInd = pesInd || []
+  const totalPesInd = listaPesInd.length
+  const pesoMedioInd = totalPesInd ? listaPesInd.reduce((s, p) => s + Number(p.peso_kg || 0), 0) / totalPesInd : 0
+  const semLotePesInd = listaPesInd.filter(p => !p.lote_id).length
+  const prontosAbatePesInd = listaPesInd.filter(p => Number(p.peso_kg) > 300).length
+  const baixoPesoPesInd = listaPesInd.filter(p => Number(p.peso_kg) < 100).length
+  const dadosFaixaResumo = FAIXAS_PESO.map(f => ({
+    rotulo: f.rotulo, cor: f.cor, sufixo: 'animais',
+    valor: listaPesInd.filter(p => Number(p.peso_kg) >= f.min && Number(p.peso_kg) < f.max).length
+  }))
 
   area.innerHTML = `
     <div class="resumo-topo">
@@ -356,6 +370,20 @@ async function paginaVisaoGeral () {
       </div>`).join('')}
     </div>` : `<div class="panel" style="padding:18px;margin-bottom:18px;"><p class="texto-dim2" style="margin:0;">Nada pendente no momento — tudo em dia.</p></div>`}
 
+    ${totalPesInd ? `
+    <div class="cabeca-secao"><h3 style="font-size:16px;">Pesagem individual do rebanho</h3>
+      <button class="btn-secundario mini" id="vg-ir-pesind">ver tela completa</button></div>
+    <div class="resumo-topo">
+      ${kpi('Animais pesados', fmtNum(totalPesInd, 0))}
+      ${kpi('Peso médio', fmtNum(pesoMedioInd, 1) + ' kg')}
+      ${kpi('Prontos p/ abate (>300kg)', fmtNum(prontosAbatePesInd, 0))}
+      ${kpi('Sem lote atribuído', fmtNum(semLotePesInd, 0), semLotePesInd > 0 ? 'alerta' : '')}
+    </div>
+    ${baixoPesoPesInd > 0 ? `<div class="panel alerta" style="padding:12px 16px;margin-bottom:14px;"><p style="margin:0;font-size:12.5px;color:var(--warn-text);">⚠️ ${baixoPesoPesInd} animal(is) com peso abaixo de 100 kg — vale conferir.</p></div>` : ''}
+    <div class="grade-graficos" style="margin-bottom:18px;">
+      ${graficoBarrasCores('Distribuição por faixa de peso', dadosFaixaResumo)}
+    </div>` : ''}
+
     <div class="cabeca-secao"><h3 style="font-size:16px;">Lotes ativos</h3></div>
     <div class="panel" style="padding:0;"><div class="tabela-scroll">
       <table><thead><tr><th>Lote</th><th class="num">Qtde</th><th>Status</th><th></th></tr></thead><tbody>
@@ -366,6 +394,10 @@ async function paginaVisaoGeral () {
     </div></div>`
 
   area.querySelectorAll('[data-ir-lotes]').forEach(b => { b.onclick = () => irPara('lotes') })
+  $('#vg-ir-pesind')?.addEventListener('click', () => {
+    irPara('lotes')
+    setTimeout(() => document.querySelector('.subabas button[data-sub="individual"]')?.click(), 50)
+  })
 }
 
 // ==================================================================
@@ -623,7 +655,7 @@ function renderPesagemIndividual (alvo) {
     </div>
 
     <div class="grade-graficos">
-      ${graficoBarras('Distribuição de peso (histograma)', dadosHist, 'var(--good-text)')}
+      ${graficoBarrasCores('Distribuição de peso (histograma)', dadosHist.map(d => ({ ...d, cor: 'var(--good-text)', sufixo: 'animais' })))}
       ${graficoBarrasCores('Distribuição por faixa de peso', dadosFaixa)}
     </div>
     <div class="grade-graficos">
@@ -633,6 +665,8 @@ function renderPesagemIndividual (alvo) {
       ])}
       ${graficoLinha('Distribuição cumulativa de peso', pontosCumulativa)}
     </div>
+
+    ${PERFIL.editavel ? `<div class="acoes" style="margin-bottom:16px;"><button class="btn" id="pi-novo">+ Nova pesagem</button></div>` : ''}
 
     ${PERFIL.editavel ? `<div class="panel" style="padding:14px 18px;margin-bottom:16px;">
       <div class="filtros">
@@ -646,7 +680,7 @@ function renderPesagemIndividual (alvo) {
     </div>` : ''}
 
     <div class="panel" style="padding:0;"><div class="tabela-scroll">
-      <table><thead><tr>${PERFIL.editavel ? '<th></th>' : ''}<th>Identificação</th><th>Tipo</th><th class="num">Peso</th><th>Faixa</th><th>Lote</th></tr></thead><tbody>
+      <table><thead><tr>${PERFIL.editavel ? '<th></th>' : ''}<th>Identificação</th><th>Tipo</th><th class="num">Peso</th><th>Faixa</th><th>Lote/pasto</th>${PERFIL.editavel ? '<th></th>' : ''}</tr></thead><tbody>
         ${lista.slice(0, 500).map(p => `<tr>
           ${PERFIL.editavel ? `<td><input type="checkbox" class="pi-check" data-id="${p.id}" ${selecaoPesInd.has(p.id) ? 'checked' : ''}></td>` : ''}
           <td><b>${esc(p.id_brinco || p.id_sn || '—')}</b></td>
@@ -654,7 +688,8 @@ function renderPesagemIndividual (alvo) {
           <td class="num">${fmtNum(p.peso_kg, 1)} kg</td>
           <td class="texto-dim2">${esc((FAIXAS_PESO.find(f => Number(p.peso_kg) >= f.min && Number(p.peso_kg) < f.max) || {}).rotulo ?? '—')}</td>
           <td class="texto-dim">${p.lote?.nome ? esc(p.lote.nome) : '<span class="texto-dim2">sem lote</span>'}</td>
-        </tr>`).join('') || `<tr><td colspan="${PERFIL.editavel ? 6 : 5}" class="vazio">Nenhum animal encontrado com esse filtro.</td></tr>`}
+          ${PERFIL.editavel ? `<td><button class="btn-secundario mini" data-editar-pi="${p.id}">editar</button></td>` : ''}
+        </tr>`).join('') || `<tr><td colspan="${PERFIL.editavel ? 7 : 5}" class="vazio">Nenhum animal encontrado com esse filtro.</td></tr>`}
       </tbody></table>
       ${lista.length > 500 ? `<p class="texto-dim2" style="padding:12px 16px;font-size:11.5px;">Mostrando os primeiros 500 de ${lista.length} — refine o filtro pra ver o resto.</p>` : ''}
     </div></div>`
@@ -668,6 +703,10 @@ function renderPesagemIndividual (alvo) {
   $('#pi-limpar').onclick = () => { filtroPesInd.busca = ''; filtroPesInd.faixa = ''; filtroPesInd.lote = ''; renderPesagemIndividual(alvo) }
 
   if (PERFIL.editavel) {
+    $('#pi-novo').onclick = () => formPesagemIndividual(null, () => subPesagemIndividual(alvo))
+    alvo.querySelectorAll('[data-editar-pi]').forEach(b => {
+      b.onclick = () => formPesagemIndividual(todos.find(x => x.id === b.dataset.editarPi), () => subPesagemIndividual(alvo))
+    })
     alvo.querySelectorAll('.pi-check').forEach(cb => {
       cb.onchange = () => { cb.checked ? selecaoPesInd.add(cb.dataset.id) : selecaoPesInd.delete(cb.dataset.id); renderPesagemIndividual(alvo) }
     })
@@ -684,6 +723,82 @@ function renderPesagemIndividual (alvo) {
       selecaoPesInd.clear()
       subPesagemIndividual(alvo)
     }
+  }
+}
+
+function formPesagemIndividual (registro, aoSalvar) {
+  const lotes = window.__FAZENDA_LOTES_FILTRO || []
+  const fundo = document.createElement('div')
+  fundo.className = 'modal-fundo'
+  fundo.innerHTML = `<div class="modal">
+    <h3>${registro ? 'Editar' : 'Nova'} pesagem individual</h3>
+    <div class="form-grade">
+      <div class="campo"><label>Tipo de identificação</label><select id="fpi-tipo">
+        <option value="Brinco" ${(!registro || registro.tipo_identificacao === 'Brinco') ? 'selected' : ''}>Brinco</option>
+        <option value="S/N" ${registro?.tipo_identificacao === 'S/N' ? 'selected' : ''}>S/N (sem identificação)</option>
+      </select></div>
+      <div class="campo" id="fpi-campo-brinco"><label>Nº do brinco</label><input id="fpi-brinco" value="${esc(registro?.id_brinco ?? '')}" placeholder="ex: 964 001060572846"></div>
+      <div class="campo" id="fpi-campo-sn"><label>Identificação S/N</label><input id="fpi-sn" value="${esc(registro?.id_sn ?? '')}" placeholder="ex: SN_0042"></div>
+      <div class="campo"><label>Peso (kg) *</label><input id="fpi-peso" inputmode="decimal" value="${registro?.peso_kg ?? ''}"></div>
+      <div class="campo"><label>Data</label><input type="date" id="fpi-data" value="${registro?.data ?? hojeISO()}"></div>
+      <div class="campo"><label>Lote/pasto</label><select id="fpi-lote"><option value="">— sem lote —</option>
+        ${lotes.map(l => `<option value="${l.id}" ${registro?.lote_id === l.id ? 'selected' : ''}>${esc(l.nome)}</option>`).join('')}</select></div>
+    </div>
+    <div class="campo" style="margin-top:10px;"><label>Observações</label><textarea id="fpi-obs" style="min-height:56px;">${esc(registro?.observacoes ?? '')}</textarea></div>
+    <div class="acoes" style="margin-top:14px;">
+      <button class="btn" id="fpi-salvar">Salvar</button>
+      ${registro ? `<button class="btn-secundario" id="fpi-excluir" style="color:var(--warn-text);">Excluir</button>` : ''}
+      <button class="btn-secundario" id="fpi-fechar">Fechar</button>
+    </div>
+    <div class="recado oculto" id="fpi-recado"></div>
+  </div>`
+  document.body.appendChild(fundo)
+  const fechar = () => fundo.remove()
+  fundo.querySelector('#fpi-fechar').onclick = fechar
+  fundo.onclick = e => { if (e.target === fundo) fechar() }
+
+  const alternarTipo = () => {
+    const ehBrinco = fundo.querySelector('#fpi-tipo').value === 'Brinco'
+    fundo.querySelector('#fpi-campo-brinco').style.display = ehBrinco ? '' : 'none'
+    fundo.querySelector('#fpi-campo-sn').style.display = ehBrinco ? 'none' : ''
+  }
+  fundo.querySelector('#fpi-tipo').onchange = alternarTipo
+  alternarTipo()
+
+  const el = fundo.querySelector('#fpi-recado')
+  const aviso = t => { el.textContent = t; el.classList.remove('oculto'); el.style.borderColor = 'var(--warn-text)'; el.style.color = 'var(--warn-text)' }
+
+  if (registro) {
+    fundo.querySelector('#fpi-excluir').onclick = async () => {
+      if (!confirm('Excluir essa pesagem? Não tem como desfazer.')) return
+      const btn = fundo.querySelector('#fpi-excluir'); btn.disabled = true; btn.textContent = 'Excluindo...'
+      const { error } = await db.from('fazenda_pesagem_individual').delete().eq('id', registro.id)
+      if (error) { btn.disabled = false; btn.textContent = 'Excluir'; aviso(error.message); return }
+      fechar(); aoSalvar()
+    }
+  }
+
+  fundo.querySelector('#fpi-salvar').onclick = async () => {
+    const tipo = fundo.querySelector('#fpi-tipo').value
+    const brinco = fundo.querySelector('#fpi-brinco').value.trim()
+    const sn = fundo.querySelector('#fpi-sn').value.trim()
+    const peso = numeroBR(fundo.querySelector('#fpi-peso').value)
+    if (tipo === 'Brinco' && !brinco) { aviso('Informe o número do brinco.'); return }
+    if (tipo === 'S/N' && !sn) { aviso('Informe a identificação S/N.'); return }
+    if (peso === null || peso <= 0) { aviso('Informe o peso.'); return }
+    const btn = fundo.querySelector('#fpi-salvar'); btn.disabled = true; btn.textContent = 'Salvando...'
+    const corpo = {
+      tipo_identificacao: tipo, id_brinco: tipo === 'Brinco' ? brinco : null, id_sn: tipo === 'S/N' ? sn : null,
+      peso_kg: peso, data: fundo.querySelector('#fpi-data').value || hojeISO(),
+      lote_id: fundo.querySelector('#fpi-lote').value || null,
+      observacoes: fundo.querySelector('#fpi-obs').value.trim() || null
+    }
+    let error
+    if (registro) { ({ error } = await db.from('fazenda_pesagem_individual').update(corpo).eq('id', registro.id)) }
+    else { ({ error } = await db.from('fazenda_pesagem_individual').insert({ ...corpo, criado_por: PERFIL.pessoaId })) }
+    btn.disabled = false; btn.textContent = 'Salvar'
+    if (error) { aviso(error.message); return }
+    fechar(); aoSalvar()
   }
 }
 
@@ -1797,11 +1912,18 @@ async function paginaRelatorios () {
 
     $('#rl-imprimir').onclick = () => {
       const janela = window.open('', '_blank')
+      const logoUrl = window.location.href.replace(/[^/]*$/, '') + 'logo-icone.png'
       janela.document.write(`<html><head><title>Relatório Fazenda Ouro Branco</title>
-        <style>body{font-family:Arial,sans-serif;padding:24px;color:#222;} h2{margin-bottom:0;}
+        <style>body{font-family:Arial,sans-serif;padding:24px;color:#222;}
+        .cabecalho-impressao{display:flex;align-items:center;gap:14px;border-bottom:2px solid #a8623a;padding-bottom:14px;margin-bottom:14px;}
+        .cabecalho-impressao img{width:56px;height:56px;object-fit:contain;}
+        .cabecalho-impressao h2{margin:0;font-size:20px;} .cabecalho-impressao p{margin:2px 0 0;color:#666;font-size:12px;}
         table{width:100%;border-collapse:collapse;margin:14px 0 24px;} th,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px;}
         th{background:#f0f0f0;} .num{text-align:right;} .grade-graficos,.cartao-grafico,.barra-dupla,.legenda-dupla{display:none;}</style></head><body>
-        <h2>Fazenda Ouro Branco — Relatório</h2><p>Período: ${fmtData(dIni)} a ${fmtData(dFim)}</p>
+        <div class="cabecalho-impressao">
+          <img src="${logoUrl}" alt="Fazenda Ouro Branco" onerror="this.style.display='none'">
+          <div><h2>Fazenda Ouro Branco</h2><p>Relatório — período de ${fmtData(dIni)} a ${fmtData(dFim)}</p></div>
+        </div>
         ${$('#rl-imprimivel').innerHTML.replace(/<button[^>]*>.*?<\/button>/g, '')}
         </body></html>`)
       janela.document.close()
