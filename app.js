@@ -264,15 +264,25 @@ function montarMenu () {
   $('#menu').innerHTML = fixos + agrupado
   $('#menu').querySelectorAll('a').forEach(a => { a.onclick = () => irPara(a.dataset.chave) })
 
-  // tema — aplica o salvo no seletor e liga a troca
+  // tema — botão pequeno com popover de amostras, no canto superior direito
   const temaAtual = localStorage.getItem('fazenda-tema') || ''
-  $('#sel-tema').value = temaAtual
-  $('#sel-tema').onchange = () => {
-    const v = $('#sel-tema').value
+  const aplicarTema = v => {
     if (v) document.documentElement.setAttribute('data-tema', v)
     else document.documentElement.removeAttribute('data-tema')
     localStorage.setItem('fazenda-tema', v)
+    document.querySelectorAll('.swatch-tema').forEach(s => s.classList.toggle('ativo', s.dataset.tema === v))
   }
+  aplicarTema(temaAtual)
+  $('#btn-tema')?.addEventListener('click', e => {
+    e.stopPropagation()
+    $('#popover-tema')?.classList.toggle('oculto')
+  })
+  document.querySelectorAll('.swatch-tema').forEach(s => {
+    s.onclick = () => { aplicarTema(s.dataset.tema); $('#popover-tema')?.classList.add('oculto') }
+  })
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#popover-tema') && !e.target.closest('#btn-tema')) $('#popover-tema')?.classList.add('oculto')
+  })
 
   // menu no celular: painel deslizante, fecha sozinho ao escolher página
   $('#btn-abrir-menu')?.addEventListener('click', () => {
@@ -353,7 +363,7 @@ async function paginaVisaoGeral () {
       ${kpi('Receitas', 'R$ ' + fmtNum(totalReceitas))}
       ${kpi('Resultado', 'R$ ' + fmtNum(totalReceitas - despesas))}
       ${kpi('Animais em confinamento', fmtNum(qtdeAnimais, 0))}
-      ${kpi('Lotes ativos', lotesAtivos.length)}
+      ${kpi('Lotes ativos', fmtNum(lotesAtivos.length, 0))}
       ${kpi('Peso médio geral', fmtNum(pesoMedio, 1) + ' kg')}
     </div>
 
@@ -891,7 +901,7 @@ async function paginaLoteDetalhe (loteId) {
       ${PERFIL.editavel ? `<button class="btn-secundario mini" id="ld-editar">Editar lote</button>` : ''}
     </div>
     <div class="resumo-topo">
-      ${kpi('Dias em confinamento', dias)}
+      ${kpi('Dias em confinamento', fmtNum(dias, 0))}
       ${kpi('Peso atual', pesoAtual ? fmtNum(pesoAtual, 1) + ' kg' : '—')}
       ${kpi('Ganho de peso', ganho ? fmtNum(ganho, 1) + ' kg' : '—')}
       ${kpi('Custo total', 'R$ ' + fmtNum(custoTotal))}

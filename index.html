@@ -168,6 +168,16 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
 .login-card input{margin-bottom:10px;}
 .login-card .btn{width:100%;padding:12px;margin-top:6px;}
 .login-erro{color:var(--warn-text);font-size:12.5px;margin-top:10px;}
+.botao-tema{width:36px;height:36px;border-radius:50%;background:var(--surface2);border:1px solid var(--line2);
+  color:var(--dim);display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none;padding:0;}
+.botao-tema:hover{border-color:var(--rust);color:var(--rust);}
+.botao-tema svg{width:17px;height:17px;}
+.popover-tema{position:absolute;top:44px;right:0;background:var(--panel);border:1px solid var(--line2);
+  border-radius:12px;padding:9px;display:flex;gap:8px;box-shadow:0 10px 28px rgba(0,0,0,.35);z-index:1001;}
+.popover-tema.oculto{display:none;}
+.swatch-tema{width:24px;height:24px;border-radius:50%;cursor:pointer;border:2px solid var(--line2);flex:none;padding:0;transition:transform .12s ease,border-color .12s ease;}
+.swatch-tema:hover{transform:scale(1.12);}
+.swatch-tema.ativo{border-color:var(--txt);box-shadow:0 0 0 2px var(--panel),0 0 0 3px var(--txt);}
 </style>
 </head>
 <body>
@@ -190,16 +200,6 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
     <div class="sub">Confinamento de gado</div>
     <div id="menu"></div>
     <div class="rodape-nav">
-      <div style="margin-bottom:10px;">
-        <label style="font-size:10px;color:var(--dim2);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px;">Tema</label>
-        <select id="sel-tema" style="width:100%;font-size:12px;padding:7px 9px;">
-          <option value="">Verde & Dourado</option>
-          <option value="azul">Azul</option>
-          <option value="roxo">Roxo</option>
-          <option value="vermelho">Vermelho</option>
-          <option value="claro">Claro</option>
-        </select>
-      </div>
       <button class="btn-secundario mini oculto" id="btn-instalar" style="width:100%;margin-bottom:8px;">📲 Instalar app</button>
       <button class="btn-secundario mini" id="btn-sair" style="width:100%;">Sair</button>
     </div>
@@ -211,6 +211,21 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
     </button>
     <div class="topo">
       <div><h2 id="titulo-pagina">Visão geral</h2><p id="subtitulo-pagina"></p></div>
+      <div style="position:relative;">
+        <button class="botao-tema" id="btn-tema" title="Mudar tema" aria-label="Mudar tema">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+          </svg>
+        </button>
+        <div class="popover-tema oculto" id="popover-tema">
+          <button class="swatch-tema" data-tema="" title="Verde &amp; Dourado" style="background:linear-gradient(135deg,#a8623a 50%,#c8a11a 50%);"></button>
+          <button class="swatch-tema" data-tema="azul" title="Azul" style="background:linear-gradient(135deg,#3e79b8 50%,#4fa8c9 50%);"></button>
+          <button class="swatch-tema" data-tema="roxo" title="Roxo" style="background:linear-gradient(135deg,#7c4dbd 50%,#a873d6 50%);"></button>
+          <button class="swatch-tema" data-tema="vermelho" title="Vermelho" style="background:linear-gradient(135deg,#c0392b 50%,#d9773d 50%);"></button>
+          <button class="swatch-tema" data-tema="claro" title="Claro" style="background:#f5f3ec;border-color:#a8623a;"></button>
+        </div>
+      </div>
     </div>
     <div id="area"></div>
   </main>
