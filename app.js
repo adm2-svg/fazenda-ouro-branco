@@ -2149,7 +2149,9 @@ async function paginaFiscal () {
       <button data-sub="config" class="ativo">Configuração</button>
       <button data-sub="emitir">Notas emitidas</button>
       <button data-sub="ativos">Ativos/Equipamentos</button>
+      <button data-sub="produtos">Produtos</button>
       <button data-sub="regras">Regras fiscais</button>
+      <button data-sub="inutilizar">Inutilizar numeração</button>
     </div>
     <div id="sub-fiscal"></div>`
   area.querySelectorAll('.subabas button').forEach(b => {
@@ -2166,7 +2168,9 @@ function abrirSubFiscal (sub) {
   if (sub === 'config') subConfigFiscal(alvo)
   if (sub === 'emitir') subNotasEmitidas(alvo)
   if (sub === 'ativos') subAtivosImobilizados(alvo)
+  if (sub === 'produtos') subProdutosFiscal(alvo)
   if (sub === 'regras') subRegrasFiscais(alvo)
+  if (sub === 'inutilizar') subInutilizarNumeracao(alvo)
 }
 
 // ----- Configuração fiscal (dados do emitente) -----
@@ -2203,8 +2207,8 @@ async function subConfigFiscal (alvo) {
       <div class="acoes" style="margin-top:16px;"><button class="btn" id="cfg-salvar">Salvar configuração</button></div>
       <div class="recado oculto" id="cfg-recado"></div>
       <p class="texto-dim2" style="font-size:11.5px;margin-top:14px;">
-        Pra emissão funcionar de verdade, também precisa da chave do provedor (FAZENDA_NFE_TOKEN) configurada
-        no Supabase pelo administrador — isso não fica aqui na tela, fica guardado com segurança do lado do servidor.</p>
+        A emissão aqui é direto com a Sefaz (sem provedor terceiro) — usa o certificado digital da fazenda,
+        guardado com segurança nos secrets do Supabase. Depois de ativar aqui, teste as etapas abaixo antes de emitir de verdade.</p>
     </div>
 
     <div class="panel" style="padding:20px;max-width:760px;margin-top:16px;">
@@ -2388,8 +2392,13 @@ async function subNotasEmitidas (alvo) {
   })
 }
 
-function formNfe (aoSalvar) {
+async function formNfe (aoSalvar) {
   const clientes = window.__FAZENDA_CADASTRO_CLIENTES || []
+  const { data: produtos } = await db.from('fazenda_produto')
+    .select('id,nome,unidade_padrao,regra:regra_fiscal_id(ncm_sugerido,cfop_interno,cst_icms,aliquota_icms)')
+    .eq('ativo', true).order('nome')
+  const catalogo = produtos || []
+
   const fundo = document.createElement('div')
   fundo.className = 'modal-fundo'
   fundo.innerHTML = `<div class="modal" style="max-width:760px;">
@@ -2415,17 +2424,36 @@ function formNfe (aoSalvar) {
   fundo.onclick = e => { if (e.target === fundo) fechar() }
 
   const linhaItem = () => `<div class="form-grade item-nfe" style="margin-bottom:8px;padding:10px;background:var(--surface2);border-radius:8px;">
+    <div class="campo" style="grid-column:span 3;"><label>Produto (puxa NCM/CFOP/CST sozinho)</label>
+      <select class="ni-produto"><option value="">— descrição livre, sem regra fiscal —</option>
+        ${catalogo.map(p => `<option value="${p.id}">${esc(p.nome)}</option>`).join('')}</select></div>
     <div class="campo" style="grid-column:span 2;"><label>Descrição *</label><input class="ni-desc"></div>
     <div class="campo"><label>Qtde *</label><input class="ni-qtd" inputmode="decimal"></div>
     <div class="campo"><label>Unidade</label><input class="ni-un" value="UN"></div>
     <div class="campo"><label>Valor unitário (R$) *</label><input class="ni-valor" inputmode="decimal"></div>
+    <div class="campo texto-dim2 ni-regra-info" style="font-size:11px;align-self:end;grid-column:span 2;">sem regra fiscal vinculada — vai sair com CFOP/CST padrão genérico</div>
     <button class="btn-secundario mini" type="button" data-remover-item style="align-self:end;">remover</button>
   </div>`
   const addItem = () => {
     const div = document.createElement('div')
     div.innerHTML = linhaItem()
-    fundo.querySelector('#ne-itens').appendChild(div.firstElementChild)
-    fundo.querySelectorAll('[data-remover-item]').forEach(b => { b.onclick = () => b.closest('.item-nfe').remove() })
+    const linha = div.firstElementChild
+    fundo.querySelector('#ne-itens').appendChild(linha)
+    linha.querySelector('[data-remover-item]').onclick = () => linha.remove()
+    linha.querySelector('.ni-produto').onchange = e => {
+      const prod = catalogo.find(p => p.id === e.target.value)
+      const info = linha.querySelector('.ni-regra-info')
+      if (!prod) { info.textContent = 'sem regra fiscal vinculada — vai sair com CFOP/CST padrão genérico'; return }
+      linha.querySelector('.ni-desc').value = prod.nome
+      linha.querySelector('.ni-un').value = prod.unidade_padrao || 'UN'
+      linha.dataset.ncm = prod.regra?.ncm_sugerido || ''
+      linha.dataset.cfop = prod.regra?.cfop_interno || ''
+      linha.dataset.cst = prod.regra?.cst_icms || ''
+      linha.dataset.aliquota = prod.regra?.aliquota_icms || ''
+      info.innerHTML = prod.regra
+        ? `<span class="badge-bom">CFOP ${esc(prod.regra.cfop_interno)} · CST ${esc(prod.regra.cst_icms)}</span>`
+        : '<span class="badge-alerta">produto sem regra fiscal vinculada — cadastre em Fiscal → Produtos</span>'
+    }
   }
   fundo.querySelector('#ne-add-item').onclick = addItem
   addItem()
@@ -2440,7 +2468,9 @@ function formNfe (aoSalvar) {
       quantidade: numeroBR(div.querySelector('.ni-qtd').value) || 0,
       unidade: div.querySelector('.ni-un').value.trim() || 'UN',
       valor_unitario: numeroBR(div.querySelector('.ni-valor').value) || 0,
-      valor_total: (numeroBR(div.querySelector('.ni-qtd').value) || 0) * (numeroBR(div.querySelector('.ni-valor').value) || 0)
+      valor_total: (numeroBR(div.querySelector('.ni-qtd').value) || 0) * (numeroBR(div.querySelector('.ni-valor').value) || 0),
+      ncm: div.dataset.ncm || null, cfop: div.dataset.cfop || null,
+      cst_icms: div.dataset.cst || null, aliquota_icms: div.dataset.aliquota ? Number(div.dataset.aliquota) : null
     })).filter(it => it.descricao)
     if (!itens.length) { aviso('Adicione ao menos um item com descrição.'); return }
     const valorTotal = itens.reduce((s, it) => s + it.valor_total, 0)
@@ -2567,7 +2597,7 @@ async function subRegrasFiscais (alvo) {
           <td class="texto-dim2">${esc(r.cst_icms)}</td>
           <td><span class="${COR_SIT(r.situacao_icms)}">${esc(ROTULO_SIT[r.situacao_icms] ?? r.situacao_icms)}</span></td>
           <td class="num">${r.aliquota_icms ? fmtNum(r.aliquota_icms, 1) + '%' : '—'}</td>
-          ${PERFIL.editavel ? `<td><button class="btn-secundario mini" data-editar="${r.id}">editar</button></td>` : ''}
+          ${PERFIL.editavel ? `<td><button class="btn-secundario mini" data-editar="${r.id}">editar</button> <button class="btn-secundario mini" data-excluir="${r.id}">excluir</button></td>` : ''}
         </tr>`).join('') || `<tr><td colspan="${PERFIL.editavel ? 7 : 6}" class="vazio">Nenhuma regra fiscal cadastrada ainda.</td></tr>`}
       </tbody></table>
     </div></div>`
@@ -2576,6 +2606,14 @@ async function subRegrasFiscais (alvo) {
     $('#rf-novo').onclick = () => formRegraFiscal(null, () => subRegrasFiscais(alvo))
     alvo.querySelectorAll('[data-editar]').forEach(b => {
       b.onclick = () => formRegraFiscal(lista.find(x => x.id === b.dataset.editar), () => subRegrasFiscais(alvo))
+    })
+    alvo.querySelectorAll('[data-excluir]').forEach(b => {
+      b.onclick = async () => {
+        if (!confirm('Excluir essa regra fiscal? Se ela já estiver vinculada a algum produto ou ativo, a exclusão vai ser recusada — nesse caso, marque como "Inativa" em vez de excluir.')) return
+        const { error } = await db.from('fazenda_regra_fiscal').delete().eq('id', b.dataset.excluir)
+        if (error) { alert('Não consegui excluir: ' + error.message); return }
+        subRegrasFiscais(alvo)
+      }
     })
   }
 }
@@ -2643,6 +2681,174 @@ function formRegraFiscal (registro, aoSalvar) {
     if (registro) { ({ error } = await db.from('fazenda_regra_fiscal').update(corpo).eq('id', registro.id)) }
     else { ({ error } = await db.from('fazenda_regra_fiscal').insert({ ...corpo, criado_por: PERFIL.pessoaId })) }
     btn.disabled = false; btn.textContent = 'Salvar'
+    if (error) { aviso(error.message); return }
+    fechar(); aoSalvar()
+  }
+}
+
+// ----- Produtos (catálogo vinculado à regra fiscal — resolve o CFOP/CST puxar automático na nota) -----
+async function subProdutosFiscal (alvo) {
+  const [{ data: produtos }, { data: regras }] = await Promise.all([
+    db.from('fazenda_produto').select('*, regra:regra_fiscal_id(nome)').order('nome'),
+    db.from('fazenda_regra_fiscal').select('id,nome').eq('ativo', true).order('nome')
+  ])
+  const lista = produtos || []
+
+  alvo.innerHTML = `
+    <p class="texto-dim2" style="margin-bottom:14px;font-size:12.5px;">Produtos que a fazenda vende (categorias de gado etc.) já com a regra fiscal (CFOP/CST) vinculada — na hora de montar uma nota, escolhe o produto e o resto vem sozinho.</p>
+    ${PERFIL.editavel ? `<div class="acoes" style="margin-bottom:16px;"><button class="btn" id="pf-novo">+ Novo produto</button></div>` : ''}
+    <div class="panel" style="padding:0;"><div class="tabela-scroll">
+      <table><thead><tr><th>Nome</th><th>Unidade</th><th>Regra fiscal</th><th>Status</th>${PERFIL.editavel ? '<th></th>' : ''}</tr></thead><tbody>
+        ${lista.map(p => `<tr>
+          <td><b>${esc(p.nome)}</b>${p.observacao ? `<div class="texto-dim2" style="font-size:11px;">${esc(p.observacao)}</div>` : ''}</td>
+          <td class="texto-dim">${esc(p.unidade_padrao)}</td>
+          <td class="texto-dim2">${p.regra ? esc(p.regra.nome) : '<span class="badge-alerta">sem regra vinculada</span>'}</td>
+          <td>${p.ativo ? '<span class="badge-bom">ativo</span>' : '<span class="chip">inativo</span>'}</td>
+          ${PERFIL.editavel ? `<td><button class="btn-secundario mini" data-editar="${p.id}">editar</button> <button class="btn-secundario mini" data-excluir="${p.id}">excluir</button></td>` : ''}
+        </tr>`).join('') || `<tr><td colspan="${PERFIL.editavel ? 5 : 4}" class="vazio">Nenhum produto cadastrado ainda.</td></tr>`}
+      </tbody></table>
+    </div></div>`
+
+  if (PERFIL.editavel) {
+    $('#pf-novo').onclick = () => formProduto(null, regras || [], () => subProdutosFiscal(alvo))
+    alvo.querySelectorAll('[data-editar]').forEach(b => {
+      b.onclick = () => formProduto(lista.find(x => x.id === b.dataset.editar), regras || [], () => subProdutosFiscal(alvo))
+    })
+    alvo.querySelectorAll('[data-excluir]').forEach(b => {
+      b.onclick = async () => {
+        if (!confirm('Excluir esse produto?')) return
+        const { error } = await db.from('fazenda_produto').delete().eq('id', b.dataset.excluir)
+        if (error) { alert('Não consegui excluir: ' + error.message); return }
+        subProdutosFiscal(alvo)
+      }
+    })
+  }
+}
+
+function formProduto (registro, regras, aoSalvar) {
+  const fundo = document.createElement('div')
+  fundo.className = 'modal-fundo'
+  fundo.innerHTML = `<div class="modal">
+    <h3>${registro ? 'Editar' : 'Novo'} produto</h3>
+    <div class="form-grade">
+      <div class="campo" style="grid-column:1/-1;"><label>Nome *</label><input id="pf-nome" value="${esc(registro?.nome ?? '')}" placeholder="ex: Boi gordo, Novilha, Bezerro..."></div>
+      <div class="campo"><label>Unidade padrão</label><input id="pf-unidade" value="${esc(registro?.unidade_padrao ?? 'UN')}"></div>
+      <div class="campo"><label>Regra fiscal</label><select id="pf-regra"><option value="">— sem regra vinculada —</option>
+        ${regras.map(r => `<option value="${r.id}" ${registro?.regra_fiscal_id === r.id ? 'selected' : ''}>${esc(r.nome)}</option>`).join('')}</select></div>
+      <div class="campo"><label>Status</label><select id="pf-ativo">
+        <option value="true" ${(!registro || registro.ativo) ? 'selected' : ''}>Ativo</option>
+        <option value="false" ${(registro && !registro.ativo) ? 'selected' : ''}>Inativo</option>
+      </select></div>
+    </div>
+    <div class="campo" style="margin-top:10px;"><label>Observação</label><textarea id="pf-obs" style="min-height:60px;">${esc(registro?.observacao ?? '')}</textarea></div>
+    <div class="acoes" style="margin-top:14px;"><button class="btn" id="pf-salvar">Salvar</button>
+      <button class="btn-secundario" id="pf-fechar">Fechar</button></div>
+    <div class="recado oculto" id="pf-recado"></div>
+  </div>`
+  document.body.appendChild(fundo)
+  const fechar = () => fundo.remove()
+  fundo.querySelector('#pf-fechar').onclick = fechar
+  fundo.onclick = e => { if (e.target === fundo) fechar() }
+
+  fundo.querySelector('#pf-salvar').onclick = async () => {
+    const el = fundo.querySelector('#pf-recado')
+    const aviso = t => { el.textContent = t; el.classList.remove('oculto'); el.style.borderColor = 'var(--warn-text)'; el.style.color = 'var(--warn-text)' }
+    const nome = fundo.querySelector('#pf-nome').value.trim()
+    if (!nome) { aviso('Escreva o nome do produto.'); return }
+    const btn = fundo.querySelector('#pf-salvar'); btn.disabled = true; btn.textContent = 'Salvando...'
+    const corpo = {
+      nome, unidade_padrao: fundo.querySelector('#pf-unidade').value.trim() || 'UN',
+      regra_fiscal_id: fundo.querySelector('#pf-regra').value || null,
+      ativo: fundo.querySelector('#pf-ativo').value === 'true',
+      observacao: fundo.querySelector('#pf-obs').value.trim() || null,
+      atualizado_em: new Date().toISOString()
+    }
+    let error
+    if (registro) { ({ error } = await db.from('fazenda_produto').update(corpo).eq('id', registro.id)) }
+    else { ({ error } = await db.from('fazenda_produto').insert({ ...corpo, criado_por: PERFIL.pessoaId })) }
+    btn.disabled = false; btn.textContent = 'Salvar'
+    if (error) { aviso(error.message); return }
+    fechar(); aoSalvar()
+  }
+}
+
+// ----- Inutilizar numeração -----
+async function subInutilizarNumeracao (alvo) {
+  const { data } = await db.from('fazenda_inutilizacao_nfe').select('*').order('criado_em', { ascending: false })
+  const lista = data || []
+  const ROTULO = { PENDENTE: 'Pendente', HOMOLOGADA: 'Homologada', REJEITADA: 'Rejeitada' }
+  const cor = s => s === 'HOMOLOGADA' ? 'badge-bom' : s === 'REJEITADA' ? 'badge-alerta' : 'chip'
+
+  alvo.innerHTML = `
+    <p class="texto-dim2" style="margin-bottom:14px;font-size:12.5px;">Processo formal da Sefaz pra "queimar" oficialmente um número (ou faixa) de NFP-e que nunca chegou a ser usado — diferente de cancelar, que é pra nota já autorizada. Use só se pulou algum número por engano.</p>
+    ${PERFIL.editavel ? `<div class="acoes" style="margin-bottom:16px;"><button class="btn" id="in-novo">+ Solicitar inutilização</button></div>` : ''}
+    <div class="panel" style="padding:0;"><div class="tabela-scroll">
+      <table><thead><tr><th>Série</th><th>Faixa</th><th>Justificativa</th><th>Status</th></tr></thead><tbody>
+        ${lista.map(p => `<tr>
+          <td class="texto-dim2">${p.serie}</td>
+          <td class="texto-dim2">${p.numero_inicial}${p.numero_final !== p.numero_inicial ? ' a ' + p.numero_final : ''}</td>
+          <td style="max-width:320px;">${esc(p.justificativa)}</td>
+          <td><span class="${cor(p.status)}">${esc(ROTULO[p.status] ?? p.status)}</span>
+            ${p.motivo ? `<div class="texto-dim2" style="font-size:10.5px;margin-top:2px;">${esc(p.motivo)}</div>` : ''}
+            ${p.status === 'PENDENTE' && PERFIL.editavel ? `<div style="margin-top:4px;"><button class="btn-secundario mini" data-enviar="${p.id}">enviar pra Sefaz</button></div>` : ''}
+          </td>
+        </tr>`).join('') || `<tr><td colspan="4" class="vazio">Nenhum pedido de inutilização ainda.</td></tr>`}
+      </tbody></table>
+    </div></div>`
+
+  if (PERFIL.editavel) {
+    $('#in-novo').onclick = () => formInutilizacao(() => subInutilizarNumeracao(alvo))
+    alvo.querySelectorAll('[data-enviar]').forEach(b => {
+      b.onclick = async () => {
+        b.disabled = true; b.textContent = 'enviando...'
+        const { data, error } = await db.functions.invoke('fazenda-inutilizar-nfe', { body: { inutilizacaoId: b.dataset.enviar } })
+        if (error || data?.erro) {
+          let msg = data?.erro || error?.message
+          if (error?.context?.json) { try { const c = await error.context.json(); msg = c?.erro || msg } catch {} }
+          alert(msg)
+        }
+        subInutilizarNumeracao(alvo)
+      }
+    })
+  }
+}
+
+function formInutilizacao (aoSalvar) {
+  const fundo = document.createElement('div')
+  fundo.className = 'modal-fundo'
+  fundo.innerHTML = `<div class="modal">
+    <h3>Solicitar inutilização de numeração</h3>
+    <p class="texto-dim2" style="font-size:12px;margin:-8px 0 14px;">A justificativa precisa ter pelo menos 15 caracteres — a Sefaz exige isso.</p>
+    <div class="form-grade">
+      <div class="campo"><label>Série *</label><input id="iu-serie" value="1"></div>
+      <div class="campo"><label>Número inicial *</label><input id="iu-ini" inputmode="numeric"></div>
+      <div class="campo"><label>Número final *</label><input id="iu-fim" inputmode="numeric"></div>
+    </div>
+    <div class="campo" style="margin-top:10px;"><label>Justificativa *</label><textarea id="iu-just" style="min-height:70px;" placeholder="ex: números pulados por erro de configuração no sistema, nunca chegaram a ser emitidos."></textarea></div>
+    <div class="acoes" style="margin-top:14px;"><button class="btn" id="iu-salvar">Criar pedido</button>
+      <button class="btn-secundario" id="iu-fechar">Fechar</button></div>
+    <div class="recado oculto" id="iu-recado"></div>
+  </div>`
+  document.body.appendChild(fundo)
+  const fechar = () => fundo.remove()
+  fundo.querySelector('#iu-fechar').onclick = fechar
+  fundo.onclick = e => { if (e.target === fundo) fechar() }
+
+  fundo.querySelector('#iu-salvar').onclick = async () => {
+    const el = fundo.querySelector('#iu-recado')
+    const aviso = t => { el.textContent = t; el.classList.remove('oculto'); el.style.borderColor = 'var(--warn-text)'; el.style.color = 'var(--warn-text)' }
+    const serie = Number(fundo.querySelector('#iu-serie').value) || 0
+    const ini = Number(fundo.querySelector('#iu-ini').value) || 0
+    const fim = Number(fundo.querySelector('#iu-fim').value) || 0
+    const just = fundo.querySelector('#iu-just').value.trim()
+    if (!serie || !ini || !fim) { aviso('Preencha série, número inicial e final.'); return }
+    if (fim < ini) { aviso('O número final não pode ser menor que o inicial.'); return }
+    if (just.length < 15) { aviso('A justificativa precisa ter pelo menos 15 caracteres.'); return }
+    const btn = fundo.querySelector('#iu-salvar'); btn.disabled = true; btn.textContent = 'Salvando...'
+    const { error } = await db.from('fazenda_inutilizacao_nfe').insert({
+      serie, numero_inicial: ini, numero_final: fim, justificativa: just, criado_por: PERFIL.pessoaId
+    })
+    btn.disabled = false; btn.textContent = 'Criar pedido'
     if (error) { aviso(error.message); return }
     fechar(); aoSalvar()
   }
