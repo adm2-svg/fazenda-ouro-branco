@@ -2370,12 +2370,19 @@ async function subNotasEmitidas (alvo) {
           <td>${esc(n.destinatario_nome)}</td><td class="num">R$ ${fmtNum(n.valor_total)}</td>
           <td><span class="${cor(n.status)}">${esc(ROTULO[n.status] ?? n.status)}</span>${n.motivo_rejeicao ? `<div class="texto-dim2" style="font-size:10.5px;margin-top:2px;">${esc(n.motivo_rejeicao)}</div>` : ''}</td>
           <td>${n.status === 'RASCUNHO' ? `<button class="btn-secundario mini" data-emitir="${n.id}">emitir</button>`
-            : n.pdf_url ? `<a class="btn-secundario mini" href="${esc(n.pdf_url)}" target="_blank">DANFE</a>` : '—'}</td>
+            : n.xml_url ? `<button class="btn-secundario mini" data-baixar-xml="${esc(n.xml_url)}">baixar XML</button>` : '—'}</td>
         </tr>`).join('') || `<tr><td colspan="6" class="vazio">Nenhuma NFP-e criada ainda.</td></tr>`}
       </tbody></table>
     </div></div>`
 
   $('#nfe-novo').onclick = () => formNfe(() => subNotasEmitidas(alvo))
+  alvo.querySelectorAll('[data-baixar-xml]').forEach(b => {
+    b.onclick = async () => {
+      const { data, error } = await db.storage.from('documentos').createSignedUrl(b.dataset.baixarXml, 60)
+      if (error || !data?.signedUrl) { alert('Não consegui gerar o link do XML: ' + (error?.message ?? '')); return }
+      window.open(data.signedUrl, '_blank')
+    }
+  })
   alvo.querySelectorAll('[data-emitir]').forEach(b => {
     b.onclick = async () => {
       b.disabled = true; b.textContent = 'emitindo...'
