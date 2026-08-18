@@ -2375,7 +2375,7 @@ async function subNotasEmitidas (alvo) {
   alvo.querySelectorAll('[data-emitir]').forEach(b => {
     b.onclick = async () => {
       b.disabled = true; b.textContent = 'emitindo...'
-      const { data, error } = await db.functions.invoke('fazenda-emitir-nfe', { body: { nfeId: b.dataset.emitir } })
+      const { data, error } = await db.functions.invoke('fazenda-emitir-nfe-sefaz', { body: { nfeId: b.dataset.emitir } })
       if (error || data?.erro) {
         let msg = data?.erro || error?.message
         if (error?.context?.json) { try { const c = await error.context.json(); msg = c?.erro || msg } catch {} }
