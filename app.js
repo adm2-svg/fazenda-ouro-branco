@@ -2409,6 +2409,7 @@ async function formNfe (aoSalvar) {
       <div class="campo" style="grid-column:span 2;"><label>Destinatário (nome) *</label><input id="ne-nome" list="ne-lista-clientes"></div>
       <datalist id="ne-lista-clientes">${clientes.map(c => `<option value="${esc(c.nome)}">`).join('')}</datalist>
       <div class="campo"><label>CPF/CNPJ do destinatário</label><input id="ne-doc"></div>
+      <div class="campo"><label>Inscrição Estadual do destinatário</label><input id="ne-ie" placeholder="deixe vazio se não contribuinte"></div>
     </div>
     <div class="cabeca-secao" style="margin-top:16px;"><h4 style="font-size:13px;margin:0;">Itens</h4>
       <button class="btn-secundario mini" id="ne-add-item" type="button">+ item</button></div>
@@ -2479,6 +2480,7 @@ async function formNfe (aoSalvar) {
     const { error } = await db.from('fazenda_nfe').insert({
       tipo: fundo.querySelector('#ne-tipo').value, destinatario_nome: nome,
       destinatario_documento: fundo.querySelector('#ne-doc').value.trim() || null,
+      destinatario_ie: fundo.querySelector('#ne-ie').value.trim() || null,
       itens, valor_total: valorTotal, observacoes: fundo.querySelector('#ne-obs').value.trim() || null,
       criado_por: PERFIL.pessoaId
     })
