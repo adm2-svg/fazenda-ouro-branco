@@ -24,6 +24,8 @@
   try {
     const temaSalvo = localStorage.getItem('fazenda-tema')
     if (temaSalvo) document.documentElement.setAttribute('data-tema', temaSalvo)
+    const larguraSalva = localStorage.getItem('fazenda-largura')
+    if (larguraSalva) document.documentElement.setAttribute('data-largura', larguraSalva)
   } catch (e) {}
 </script>
 <style>
@@ -96,7 +98,19 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--rust);}
 .nav a:hover{background:var(--hover-bg);color:var(--txt);}
 .nav a.ativo{background:var(--hover-bg);color:var(--txt);border-left:3px solid var(--rust);}
 .nav .rodape-nav{margin-top:24px;padding-top:14px;border-top:1px solid var(--line);}
-.conteudo{padding:24px 28px;max-width:1400px;}
+.conteudo{padding:24px 28px;max-width:1400px;transition:max-width .2s;}
+html[data-largura="amplo"] .conteudo{max-width:1800px;}
+html[data-largura="cheio"] .conteudo{max-width:none;}
+/* mesmo truque do sistema Gefoscal: zoom escala tudo junto (fonte,
+   espaçamento, imagens) nos modos mais espaçosos, sem precisar trocar
+   cada font-size em px do sistema pra rem */
+body{zoom:1;transition:zoom .2s;}
+html[data-largura="amplo"] body{zoom:1.06;}
+html[data-largura="cheio"] body{zoom:1.12;}
+.largura-toggle{background:none;border:1px solid var(--line2);color:var(--dim);cursor:pointer;
+  padding:6px 10px;border-radius:8px;font-size:12px;line-height:1;
+  display:flex;align-items:center;gap:6px;transition:all .15s;}
+.largura-toggle:hover{border-color:var(--rust);color:var(--txt);}
 .topo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:18px;}
 .topo h2{margin:0 0 4px;font-size:23px;}
 .topo p{margin:0;color:var(--dim2);font-size:13px;}
@@ -211,7 +225,10 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
     </button>
     <div class="topo">
       <div><h2 id="titulo-pagina">Visão geral</h2><p id="subtitulo-pagina"></p></div>
-      <div style="position:relative;">
+      <div style="display:flex;gap:8px;align-items:center;position:relative;">
+        <button class="largura-toggle" id="largura-toggle-app" title="Alternar largura do conteúdo">
+          <span id="largura-icone">⇔</span><span id="largura-rotulo">Compacto</span>
+        </button>
         <button class="botao-tema" id="btn-tema" title="Mudar tema" aria-label="Mudar tema">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="4"/>

@@ -2875,6 +2875,27 @@ function formInutilizacao (aoSalvar) {
 }
 
 // ==================================================================
+// Largura do conteúdo — Compacto / Amplo / Tela cheia, mesmo recurso
+// e mesmo botão do sistema Gefoscal principal. Cicla ao clicar, guarda
+// a escolha no navegador. Fica no cabeçalho de qualquer página, então
+// funciona mesmo antes do login resolver (não depende de abrirApp()).
+// ==================================================================
+const LARGURAS = ['compacto', 'amplo', 'cheio']
+const ROTULO_LARGURA = { compacto: 'Compacto', amplo: 'Amplo', cheio: 'Tela cheia' }
+function aplicarLargura (l) {
+  document.documentElement.setAttribute('data-largura', l)
+  localStorage.setItem('fazenda-largura', l)
+  const rot = document.getElementById('largura-rotulo')
+  if (rot) rot.textContent = ROTULO_LARGURA[l] || 'Compacto'
+}
+aplicarLargura(localStorage.getItem('fazenda-largura') || 'compacto')
+const btnLargura = document.getElementById('largura-toggle-app')
+if (btnLargura) btnLargura.onclick = () => {
+  const atual = document.documentElement.getAttribute('data-largura') || 'compacto'
+  aplicarLargura(LARGURAS[(LARGURAS.indexOf(atual) + 1) % LARGURAS.length])
+}
+
+// ==================================================================
 // Assistente do Sistema — bolha flutuante em qualquer tela, igual à
 // do sistema Gefoscal principal (mesmo visual e mesmo jeito de usar).
 // Fala com a function "fazenda-assistente-sistema" (irmã da
