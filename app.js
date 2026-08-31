@@ -204,6 +204,7 @@ async function abrirApp () {
   document.getElementById('app').classList.remove('oculto')
   montarMenu()
   irPara('visao_geral')
+  montarWidgetAssistente()
 }
 
 // checa sessão existente ao carregar
@@ -2871,6 +2872,210 @@ function formInutilizacao (aoSalvar) {
     if (error) { aviso(error.message); return }
     fechar(); aoSalvar()
   }
+}
+
+// ==================================================================
+// Assistente do Sistema — bolha flutuante em qualquer tela, igual à
+// do sistema Gefoscal principal (mesmo visual e mesmo jeito de usar).
+// Fala com a function "fazenda-assistente-sistema" (irmã da
+// "assistente-sistema" de lá, mas com o mapa de páginas DESTE app —
+// não dá pra reaproveitar a de lá porque as páginas são diferentes).
+// Tem botão de áudio (fala e transcreve pro campo de texto, usando
+// reconhecimento de voz do próprio navegador — não sai áudio nenhum
+// do aparelho da pessoa). Não mexe em dado nenhum, só orienta como
+// usar o sistema.
+// ==================================================================
+let ASSIST_HISTORICO = []
+let ASSIST_ABERTO = false
+let ASSIST_RECONHECIMENTO = null
+
+function estilosWidgetsUmaVez () {
+  if ($('#widgets-estilos')) return
+  const s = document.createElement('style')
+  s.id = 'widgets-estilos'
+  s.textContent = `
+    .widget-bolha { transition:transform .18s ease, box-shadow .18s ease; }
+    .widget-bolha:hover { transform:translateY(-3px) scale(1.03); }
+    .widget-bolha:active { transform:translateY(-1px) scale(.98); }
+    .widget-fechar:hover { background:rgba(255,255,255,.28) !important; }
+    .widget-enviar:hover { filter:brightness(1.08); transform:translateY(-1px); }
+    .widget-enviar { transition:transform .12s ease, filter .12s ease; }
+    .widget-digitando span { width:6px;height:6px;border-radius:50%;background:var(--dim2);display:inline-block;margin-right:3px;animation:widget-piscar 1.1s ease-in-out infinite; }
+    .widget-digitando span:nth-child(2) { animation-delay:.15s; }
+    .widget-digitando span:nth-child(3) { animation-delay:.3s; margin-right:0; }
+    @keyframes widget-piscar { 0%,60%,100% { opacity:.3; transform:translateY(0); } 30% { opacity:1; transform:translateY(-2px); } }
+    #assist-painel::-webkit-scrollbar { width:6px; }
+    #assist-painel ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:10px; }
+    .sec-msg { padding:9px 13px; border-radius:14px; font-size:13px; line-height:1.4; }
+    .sec-msg.sec-user { background:var(--rust); color:#fff; border-bottom-right-radius:4px; }
+    .sec-msg.sec-ia { background:var(--surface2); border:1px solid var(--line); border-bottom-left-radius:4px; }
+  `
+  document.head.appendChild(s)
+}
+
+function montarWidgetAssistente () {
+  if ($('#assist-bolha')) return // já montado, não duplica
+  estilosWidgetsUmaVez()
+
+  const bolha = document.createElement('button')
+  bolha.id = 'assist-bolha'
+  bolha.type = 'button'
+  bolha.className = 'widget-bolha'
+  bolha.innerHTML = '<span style="font-size:16px;">✨</span> Assistente'
+  bolha.style.cssText = `
+    position:fixed; right:22px; bottom:22px; z-index:9000;
+    background:linear-gradient(135deg,var(--gold),rgba(var(--gold-rgb),.65));
+    color:#3a2e08; border:none; border-radius:30px;
+    padding:13px 22px; font-weight:700; font-size:13.5px; cursor:pointer;
+    display:flex; align-items:center; gap:8px;
+    box-shadow:0 8px 26px rgba(0,0,0,.35), 0 2px 8px rgba(0,0,0,.2);`
+  document.body.appendChild(bolha)
+
+  const painel = document.createElement('div')
+  painel.id = 'assist-painel'
+  painel.style.cssText = `
+    position:fixed; right:22px; bottom:78px; z-index:9000; width:370px; max-width:calc(100vw - 32px);
+    height:min(540px, calc(100vh - 120px)); background:var(--panel); border:1px solid var(--line);
+    border-radius:18px; box-shadow:0 20px 50px rgba(0,0,0,.5); display:none; flex-direction:column; overflow:hidden;
+    opacity:0; transform:translateY(14px) scale(.97); transition:opacity .18s ease, transform .18s ease;`
+  painel.innerHTML = `
+    <div style="background:linear-gradient(135deg,var(--gold),rgba(var(--gold-rgb),.65)); color:#3a2e08; padding:16px 18px; display:flex; justify-content:space-between; align-items:center; flex:none;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.35);display:flex;align-items:center;justify-content:center;font-size:17px;">✨</div>
+        <div><b style="font-size:14.5px;font-family:var(--serif);">Assistente do Sistema</b>
+          <div style="font-size:11px;opacity:.8;">tira dúvida de como usar o sistema da Fazenda</div></div>
+      </div>
+      <button id="assist-fechar" class="widget-fechar" style="background:rgba(255,255,255,.2);border:none;width:28px;height:28px;border-radius:50%;font-size:17px;cursor:pointer;color:#3a2e08;line-height:1;flex:none;">−</button>
+    </div>
+    <div id="as-chat" style="flex:1;padding:16px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;background:var(--bg);"></div>
+    <div style="padding:12px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:flex-end;flex:none;background:var(--panel);">
+      <button id="as-mic" type="button" title="Falar" style="flex:none;border:1px solid var(--line2);background:var(--surface2);
+        border-radius:50%;width:38px;height:38px;cursor:pointer;font-size:15px;">🎤</button>
+      <textarea id="as-pergunta" placeholder="Escreve ou fala sua dúvida..." style="flex:1;min-height:38px;max-height:80px;font-size:13px;border-radius:20px;padding:9px 16px;"></textarea>
+      <button id="as-enviar" class="widget-enviar" style="flex:none;width:38px;height:38px;border-radius:50%;border:none;
+        background:var(--gold,#c8a11a);color:#3a2e08;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;">➤</button>
+    </div>`
+  document.body.appendChild(painel)
+
+  const chat = () => $('#as-chat')
+  const renderMensagem = (autor, texto, chaveIr, subIr) => {
+    const minha = autor === 'user'
+    const bolhaMsg = document.createElement('div')
+    bolhaMsg.style.cssText = `align-self:${minha ? 'flex-end' : 'flex-start'};max-width:88%;display:flex;gap:8px;flex-direction:${minha ? 'row-reverse' : 'row'};`
+    const nomePagina = chaveIr ? (PAGINAS[chaveIr]?.nome ?? chaveIr) : null
+    bolhaMsg.innerHTML = `
+      ${!minha ? `<div style="flex:none;width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--gold),var(--rust));
+        display:flex;align-items:center;justify-content:center;font-size:12px;margin-top:2px;">✨</div>` : ''}
+      <div>
+        <div class="sec-msg ${minha ? 'sec-user' : 'sec-ia'}" style="white-space:pre-wrap;">${esc(texto)}</div>
+        ${nomePagina ? `<button data-ir-para-assist="${esc(chaveIr)}" data-sub-assist="${esc(subIr || '')}" class="btn mini" style="margin-top:6px;width:100%;">📍 Ir para ${esc(nomePagina)}</button>` : ''}
+      </div>`
+    chat().appendChild(bolhaMsg)
+    chat().scrollTop = chat().scrollHeight
+    const btnIr = bolhaMsg.querySelector('[data-ir-para-assist]')
+    if (btnIr) btnIr.onclick = () => {
+      abrirFechar()
+      const chave = btnIr.dataset.irParaAssist
+      const sub = btnIr.dataset.subAssist
+      irPara(chave)
+      // a página renderiza de forma assíncrona — espera aparecer as
+      // sub-abas antes de tentar clicar na certa
+      if (sub) {
+        let tentativas = 0
+        const tentar = () => {
+          const botaoSub = document.querySelector(`.subabas button[data-sub="${sub}"]`)
+          if (botaoSub) { botaoSub.click(); return }
+          if (++tentativas < 20) setTimeout(tentar, 100)
+        }
+        setTimeout(tentar, 100)
+      }
+    }
+    return bolhaMsg
+  }
+
+  const renderDigitando = () => {
+    const bolhaMsg = document.createElement('div')
+    bolhaMsg.id = 'as-digitando'
+    bolhaMsg.style.cssText = 'align-self:flex-start;max-width:88%;display:flex;gap:8px;'
+    bolhaMsg.innerHTML = `
+      <div style="flex:none;width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--gold),var(--rust));
+        display:flex;align-items:center;justify-content:center;font-size:12px;margin-top:2px;">✨</div>
+      <div class="sec-msg sec-ia widget-digitando"><span></span><span></span><span></span></div>`
+    chat().appendChild(bolhaMsg)
+    chat().scrollTop = chat().scrollHeight
+    return bolhaMsg
+  }
+
+  const abrirFechar = () => {
+    ASSIST_ABERTO = !ASSIST_ABERTO
+    if (ASSIST_ABERTO) {
+      painel.style.display = 'flex'
+      requestAnimationFrame(() => { painel.style.opacity = '1'; painel.style.transform = 'translateY(0) scale(1)' })
+      if (!chat().childElementCount) {
+        renderMensagem('assistant', 'Oi! Posso te ajudar a achar qualquer coisa no sistema da Fazenda ou explicar como fazer uma tarefa. O que você precisa?')
+        ASSIST_HISTORICO.forEach(m => renderMensagem(m.role === 'user' ? 'user' : 'assistant', m.content))
+      }
+    } else {
+      painel.style.opacity = '0'; painel.style.transform = 'translateY(14px) scale(.97)'
+      setTimeout(() => { painel.style.display = 'none' }, 180)
+    }
+  }
+  bolha.onclick = abrirFechar
+  $('#assist-fechar').onclick = abrirFechar
+
+  // ---- áudio: reconhecimento de voz do navegador, transcreve pro campo ----
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition
+  const btnMic = $('#as-mic')
+  if (!SpeechRec) {
+    btnMic.disabled = true
+    btnMic.title = 'Seu navegador não suporta reconhecimento de voz'
+    btnMic.style.opacity = '.4'
+  } else {
+    btnMic.onclick = () => {
+      if (ASSIST_RECONHECIMENTO) { ASSIST_RECONHECIMENTO.stop(); return }
+      const rec = new SpeechRec()
+      rec.lang = 'pt-BR'
+      rec.interimResults = false
+      rec.onstart = () => { btnMic.style.background = 'var(--warn-text)'; btnMic.textContent = '⏺️' }
+      rec.onresult = e => {
+        const texto = e.results[0][0].transcript
+        $('#as-pergunta').value = ($('#as-pergunta').value + ' ' + texto).trim()
+      }
+      rec.onerror = () => { renderMensagem('assistant', 'Não consegui ouvir direito — tenta de novo ou escreve mesmo.') }
+      rec.onend = () => { btnMic.style.background = 'var(--surface2)'; btnMic.textContent = '🎤'; ASSIST_RECONHECIMENTO = null }
+      ASSIST_RECONHECIMENTO = rec
+      rec.start()
+    }
+  }
+
+  const enviar = async () => {
+    const texto = $('#as-pergunta').value.trim()
+    if (!texto) return
+    renderMensagem('user', texto)
+    $('#as-pergunta').value = ''
+    const btn = $('#as-enviar'); btn.disabled = true
+    const carregando = renderDigitando()
+
+    ASSIST_HISTORICO.push({ role: 'user', content: texto })
+    const { data, error } = await db.functions.invoke('fazenda-assistente-sistema', { body: { mensagens: ASSIST_HISTORICO } })
+    btn.disabled = false
+    carregando.remove()
+
+    if (error || data?.erro) {
+      let detalhe = data?.erro || error?.message || 'Erro ao consultar.'
+      let aviso = data?.aviso
+      if (error?.context?.json) {
+        try { const corpo = await error.context.json(); detalhe = corpo?.erro || detalhe; aviso = corpo?.aviso || aviso } catch {}
+      }
+      renderMensagem('assistant', detalhe + (aviso ? '\n\n' + aviso : ''))
+      ASSIST_HISTORICO.pop()
+      return
+    }
+    ASSIST_HISTORICO.push({ role: 'assistant', content: data.resposta })
+    renderMensagem('assistant', data.resposta, data.irPara, data.irParaSub)
+  }
+  $('#as-enviar').onclick = enviar
+  $('#as-pergunta').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviar() } }
 }
 
 // ==================================================================
