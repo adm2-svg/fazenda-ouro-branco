@@ -2972,7 +2972,7 @@ function montarWidgetAssistente () {
     <div style="padding:12px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:flex-end;flex:none;background:var(--panel);">
       <button id="as-mic" type="button" title="Falar" style="flex:none;border:1px solid var(--line2);background:var(--surface2);
         border-radius:50%;width:38px;height:38px;cursor:pointer;font-size:15px;">🎤</button>
-      <textarea id="as-pergunta" placeholder="Escreve ou fala sua dúvida..." style="flex:1;min-height:38px;max-height:80px;font-size:13px;border-radius:20px;padding:9px 16px;"></textarea>
+      <textarea id="as-pergunta" placeholder="Escreve ou fala sua dúvida..." style="flex:1;min-height:38px;max-height:80px;font-size:16px;border-radius:20px;padding:9px 16px;"></textarea>
       <button id="as-enviar" class="widget-enviar" style="flex:none;width:38px;height:38px;border-radius:50%;border:none;
         background:var(--gold,#c8a11a);color:#3a2e08;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;">➤</button>
     </div>`
