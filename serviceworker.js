@@ -3,7 +3,7 @@
 // todo, então isso não dá funcionamento "offline de verdade" — só
 // deixa o app instalável (ícone, tela cheia) e guarda em cache o
 // esqueleto da página pra abrir mais rápido.
-const CACHE = 'fazenda-ouro-branco-v5'
+const CACHE = 'fazenda-ouro-branco-v6'
 const ARQUIVOS_ESQUELETO = ['./index.html', './app.js', './manifest.json']
 
 self.addEventListener('install', (evento) => {
