@@ -71,16 +71,6 @@ input,select,textarea{background:var(--surface2);border:1px solid var(--line2);b
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--rust);}
 .oculto{display:none!important;}
 .app{display:grid;grid-template-columns:230px 1fr;min-height:100vh;}
-@media (max-width:820px){
-  .app{grid-template-columns:1fr;}
-  .nav{position:fixed;left:0;top:0;height:100vh;width:230px;z-index:1000;
-       transform:translateX(-100%);transition:transform .22s ease;box-shadow:2px 0 24px rgba(0,0,0,.35);}
-  .nav.aberto{transform:translateX(0);}
-  .fundo-nav-mobile{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:999;}
-  .fundo-nav-mobile.aberto{display:block;}
-  .botao-abrir-menu{display:flex !important;}
-  .conteudo{padding:16px 14px;}
-}
 .fundo-nav-mobile{display:none;}
 .botao-abrir-menu{display:none;align-items:center;justify-content:center;width:38px;height:38px;
   border-radius:8px;background:var(--surface2);border:1px solid var(--line2);color:var(--txt);
@@ -192,6 +182,56 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
 .swatch-tema{width:24px;height:24px;border-radius:50%;cursor:pointer;border:2px solid var(--line2);flex:none;padding:0;transition:transform .12s ease,border-color .12s ease;}
 .swatch-tema:hover{transform:scale(1.12);}
 .swatch-tema.ativo{border-color:var(--txt);box-shadow:0 0 0 2px var(--panel),0 0 0 3px var(--txt);}
+
+/* =========================================================
+   CELULAR/TABLET ESTREITO — um código só, que se reorganiza
+   sozinho pela largura da tela (é assim que a Web já detecta
+   "isso aqui é um celular": telefone = tela estreita, computador
+   = tela larga, na prática dá no mesmo resultado de checar o
+   aparelho, sem precisar manter duas versões separadas).
+   ESTE BLOCO FICA POR ÚLTIMO NA FOLHA DE ESTILO DE PROPÓSITO —
+   em CSS, quando duas regras da mesma "força" (especificidade)
+   miram a mesma propriedade, quem vem DEPOIS no arquivo ganha,
+   mesmo que a de cima esteja dentro de um @media que bateu. Um
+   bloco de celular no meio do arquivo corre o risco de ser
+   sobrescrito por uma regra "de sempre" mais abaixo — foi o que
+   aconteceu com o padding do .conteudo antes desta correção.
+   ========================================================= */
+@media (max-width:820px){
+  .app{grid-template-columns:1fr;}
+  .nav{position:fixed;left:0;top:0;height:100vh;width:min(230px, 82vw);z-index:1000;
+       transform:translateX(-100%);transition:transform .22s ease;box-shadow:2px 0 24px rgba(0,0,0,.35);
+       padding-top:max(20px, env(safe-area-inset-top));}
+  .nav.aberto{transform:translateX(0);}
+  .fundo-nav-mobile{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:999;}
+  .fundo-nav-mobile.aberto{display:block;}
+  .botao-abrir-menu{display:flex;}
+  .conteudo{padding:16px 14px;padding-bottom:max(16px, env(safe-area-inset-bottom));max-width:none;}
+  /* tela já estreita por natureza — "Amplo"/"Tela cheia" (que existem
+     pra aproveitar monitor grande) não fazem sentido aqui, então o
+     conteúdo já nasce ocupando o espaço todo e o botão some */
+  body{zoom:1;}
+  .largura-toggle{display:none;}
+  .modal-fundo{padding:10px;}
+  .modal{padding:16px;max-height:94vh;}
+  .login-card{padding:22px;}
+  .tabela-scroll{-webkit-overflow-scrolling:touch;}
+  .topo{gap:10px;}
+  /* a bolha e o painel do Assistente são montados via JS com estilo
+     inline (pra funcionar em qualquer página) — por isso o !important
+     aqui: é a única forma de uma regra da folha de estilo vencer um
+     estilo inline, não tem relação com a ordem no arquivo */
+  #assist-bolha span:last-child{display:none;}
+  #assist-bolha{padding:13px !important;border-radius:50% !important;
+    right:max(14px, env(safe-area-inset-right)) !important;
+    bottom:max(14px, env(safe-area-inset-bottom)) !important;}
+  #assist-painel{right:10px !important;left:10px !important;width:auto !important;max-width:none !important;
+    bottom:calc(66px + env(safe-area-inset-bottom)) !important;}
+}
+@media (max-width:380px){
+  .login-card{padding:18px;}
+  .login-card .icone{width:60px;height:60px;}
+}
 </style>
 </head>
 <body>
