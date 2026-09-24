@@ -145,7 +145,13 @@ html[data-largura="cheio"] body{zoom:1.12;}
 .subabas button{border:1px solid var(--line2);background:var(--surface2);color:var(--dim);border-radius:20px;padding:8px 16px;font-size:12.5px;font-weight:600;cursor:pointer;}
 .subabas button.ativo{background:var(--rust);border-color:var(--rust);color:#fff;}
 .filtros{display:flex;gap:10px;flex-wrap:wrap;align-items:end;}
-.campo{display:flex;flex-direction:column;gap:5px;min-width:130px;}
+/* flex-basis fixo (não "auto") é o que evita o campo inflar pro tamanho
+   que o CONTROLE NATIVO do navegador pede — no Safari do iPad, um
+   <input type="date"> sozinho já pede uns 250-300px (escreve "25 de
+   ago. de 2026" por extenso), e sem isso cada campo de data vira uma
+   linha inteira sozinho, empurrando o resto pra baixo */
+.campo{display:flex;flex-direction:column;gap:5px;flex:1 1 160px;min-width:130px;max-width:260px;}
+.campo input[type="date"],.campo input[type="month"]{min-width:0;}
 .campo label{font-size:11px;color:var(--dim2);text-transform:uppercase;letter-spacing:.04em;}
 .form-grade{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;}
 .acoes{display:flex;gap:10px;flex-wrap:wrap;}
@@ -391,7 +397,6 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
   <div class="login-card">
     <div class="icone"><img src="logo-icone.png" alt="Fazenda Ouro Branco" style="width:100%;height:100%;object-fit:contain;"></div>
     <h1>Fazenda Ouro Branco</h1>
-    <p>Confinamento — entrar com sua conta do Grupo Gefoscal</p>
     <input type="email" id="lg-email" placeholder="e-mail">
     <input type="password" id="lg-senha" placeholder="senha">
     <button class="btn" id="lg-entrar">Entrar</button>
