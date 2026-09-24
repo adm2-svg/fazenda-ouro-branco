@@ -1226,14 +1226,94 @@ async function paginaNotasFiscais () {
           <td><span class="chip">${n.tipo === 'SAIDA' ? 'Saída' : 'Entrada'}</span></td>
           <td>${esc(n.fornecedor_cliente ?? '—')}</td><td class="texto-dim">${esc(n.numero_nf ?? '—')}</td>
           <td class="texto-dim2">${esc(n.lote?.nome ?? '—')}</td><td class="num">R$ ${fmtNum(n.valor)}</td>
-          <td>${n.lancamento_financeiro_id ? '<span class="badge-bom">lançado</span>' : '<span class="texto-dim2">—</span>'}</td>
+          <td>${n.lancamento_financeiro_id ? '<span class="badge-bom">vinculado</span>'
+            : PERFIL.editavel ? `<button class="btn-secundario mini" data-vincular-nf="${n.id}">conferir</button>` : '<span class="badge-alerta">sem vínculo</span>'}</td>
           <td>${n.arquivo_url ? `<button class="btn-secundario mini" data-abrir-nf="${esc(n.arquivo_url)}">abrir</button>` : '—'}</td>
         </tr>`).join('') || `<tr><td colspan="8" class="vazio">Nenhuma nota fiscal anexada ainda.</td></tr>`}
       </tbody></table>
     </div></div>`
 
   area.querySelectorAll('[data-abrir-nf]').forEach(b => { b.onclick = () => abrirArquivo(b.dataset.abrirNf) })
+  area.querySelectorAll('[data-vincular-nf]').forEach(b => {
+    b.onclick = () => formVincularNota((notas || []).find(n => n.id === b.dataset.vincularNf), () => paginaNotasFiscais())
+  })
   if (PERFIL.editavel) $('#nfp-novo').onclick = () => formNotaFiscal({}, () => paginaNotasFiscais())
+}
+
+// ----- Conferência nota × Financeiro -----
+// A despesa normalmente já está no Financeiro quando a nota chega (o
+// relatório de títulos pagos do CIEvolution entra antes). Por isso, ao
+// anexar a nota, o sistema procura o lançamento que bate — mesmo tipo,
+// valor igual ou muito perto e data próxima — e deixa VINCULAR em vez
+// de criar outro. Criar lançamento novo continua possível, mas deixou
+// de ser o padrão quando existe um que bate: era assim que a compra
+// aparecia duas vezes no relatório.
+const NF_JANELA_DIAS = 60 // antes e depois da data da nota
+const NF_TOLERANCIA_PCT = 2 // "valor próximo": até 2% de diferença
+
+async function nfBuscarCandidatos (tipoNf, valor, dataNf, ignorarNotaId = null) {
+  if (!valor || !dataNf) return []
+  const tipoLanc = tipoNf === 'SAIDA' ? 'ENTRADA' : 'SAIDA'
+  const d = new Date(dataNf + 'T00:00:00')
+  const de = new Date(d.getTime() - NF_JANELA_DIAS * 864e5).toISOString().slice(0, 10)
+  const ate = new Date(d.getTime() + NF_JANELA_DIAS * 864e5).toISOString().slice(0, 10)
+  const folga = Math.max(5, valor * NF_TOLERANCIA_PCT / 100)
+  const [{ data: lancs, error }, { data: jaVinculados }] = await Promise.all([
+    db.from('lancamento_financeiro')
+      .select('id,data_lancamento,valor,descricao,situacao,comprovante_caminho,observacao,categoria:categoria_id(nome),fornecedor:fornecedor_id(nome)')
+      .eq('centro_custo_id', FAZENDA_CENTRO_CUSTO_ID).eq('tipo', tipoLanc)
+      .gte('valor', valor - folga).lte('valor', valor + folga)
+      .gte('data_lancamento', de).lte('data_lancamento', ate).limit(50),
+    db.from('fazenda_nota_fiscal').select('id,numero_nf,lancamento_financeiro_id').not('lancamento_financeiro_id', 'is', null)
+  ])
+  if (error) throw error
+  const ocupados = new Map((jaVinculados || []).filter(n => n.id !== ignorarNotaId).map(n => [n.lancamento_financeiro_id, n.numero_nf]))
+  return (lancs || [])
+    .filter(l => !ocupados.has(l.id))
+    .map(l => ({ ...l, diferenca: Number(l.valor) - valor, dias: Math.round((new Date(l.data_lancamento + 'T00:00:00') - d) / 864e5) }))
+    .sort((a, b) => Math.abs(a.diferenca) - Math.abs(b.diferenca) || Math.abs(a.dias) - Math.abs(b.dias))
+}
+
+// lista de candidatos em forma de escolha única; a primeira opção que
+// bate exato já vem marcada
+function nfHtmlCandidatos (cands, permitirCriar = true) {
+  const exato = c => Math.abs(c.diferenca) < 0.01
+  const linha = (c, i) => `
+    <label class="passo" style="cursor:pointer;align-items:flex-start;gap:10px;justify-content:flex-start;">
+      <input type="radio" name="nf-destino" value="${c.id}" ${i === 0 && Math.abs(cands[0].diferenca) <= Math.max(5, Number(c.valor) * 0.005) ? 'checked' : ''} style="width:auto;margin-top:3px;">
+      <span style="flex:1;min-width:0;">
+        <b>${esc(c.descricao || 'sem descrição')}</b>
+        <span class="texto-dim2" style="display:block;font-size:12px;margin-top:2px;">
+          ${fmtData(c.data_lancamento)} (${c.dias === 0 ? 'mesmo dia da nota' : `${Math.abs(c.dias)} dia(s) ${c.dias > 0 ? 'depois' : 'antes'} da nota`})
+          · ${esc(c.categoria?.nome || 'sem categoria')} · ${c.situacao === 'EFETIVADO' ? 'pago' : 'pendente'}${c.comprovante_caminho ? ' · já tem comprovante' : ''}</span>
+      </span>
+      <span style="text-align:right;white-space:nowrap;">
+        <b>R$ ${fmtNum(c.valor)}</b>
+        <span style="display:block;font-size:11.5px;" class="${exato(c) ? 'badge-bom' : 'badge-alerta'}">${exato(c) ? 'valor igual' : `diferença de R$ ${fmtNum(Math.abs(c.diferenca))}`}</span>
+      </span>
+    </label>`
+  const algumMarcado = cands.length && Math.abs(cands[0].diferenca) <= Math.max(5, Number(cands[0].valor) * 0.005)
+  return `
+    ${cands.length
+      ? `<p style="margin:0 0 8px;font-size:12.5px;"><b>${cands.length === 1 ? 'Achei 1 lançamento' : `Achei ${cands.length} lançamentos`}</b> no Financeiro da fazenda que batem com essa nota (valor até ${NF_TOLERANCIA_PCT}% de diferença, até ${NF_JANELA_DIAS} dias de distância). Escolha qual é:</p>
+         ${cands.map(linha).join('')}`
+      : `<p style="margin:0 0 8px;font-size:12.5px;" class="texto-dim">Nenhum lançamento da fazenda bate com esse valor e essa data.</p>`}
+    ${permitirCriar ? `<label class="passo" style="cursor:pointer;justify-content:flex-start;gap:10px;">
+      <input type="radio" name="nf-destino" value="novo" ${!algumMarcado ? 'checked' : ''} style="width:auto;"> Não é nenhum desses — criar um lançamento novo (pendente)</label>` : ''}
+    <label class="passo" style="cursor:pointer;justify-content:flex-start;gap:10px;">
+      <input type="radio" name="nf-destino" value="nada" style="width:auto;"> Só guardar a nota, sem mexer no Financeiro</label>`
+}
+
+// grava o vínculo no lançamento escolhido: a nota vira o comprovante (se
+// ele ainda não tiver um) e o nº da NF fica anotado na observação
+async function nfVincularLancamento (lancId, { numeroNf, caminho, nomeArquivo }) {
+  const { data: l, error: e1 } = await db.from('lancamento_financeiro').select('observacao,comprovante_caminho').eq('id', lancId).single()
+  if (e1) throw e1
+  const marca = `NF ${numeroNf || 's/nº'} vinculada em ${fmtData(hojeISO())}`
+  const corpo = { observacao: l.observacao ? `${l.observacao} | ${marca}` : marca, editado_em: new Date().toISOString(), editado_por: PERFIL.pessoaId || null }
+  if (!l.comprovante_caminho && caminho) { corpo.comprovante_caminho = caminho; corpo.comprovante_nome = nomeArquivo }
+  const { error } = await db.from('lancamento_financeiro').update(corpo).eq('id', lancId)
+  if (error) throw error
 }
 
 function formNotaFiscal (preset, aoSalvar) {
@@ -1243,18 +1323,20 @@ function formNotaFiscal (preset, aoSalvar) {
   fundo.innerHTML = `<div class="modal">
     <h3>Anexar nota fiscal</h3>
     <div class="form-grade">
-      <div class="campo"><label>Data *</label><input type="date" id="nf-data" value="${hojeISO()}"></div>
+      <div class="campo"><label>Data da nota *</label><input type="date" id="nf-data" value="${hojeISO()}"></div>
       <div class="campo"><label>Tipo</label><select id="nf-tipo"><option value="ENTRADA">Entrada (compra)</option><option value="SAIDA">Saída (venda)</option></select></div>
       <div class="campo"><label>Fornecedor/cliente</label><input id="nf-fc"></div>
       <div class="campo"><label>Nº da NF</label><input id="nf-num"></div>
-      <div class="campo"><label>Valor (R$)</label><input id="nf-valor" inputmode="decimal"></div>
+      <div class="campo"><label>Valor (R$) *</label><input id="nf-valor" inputmode="decimal"></div>
       <div class="campo"><label>Lote (opcional)</label><select id="nf-lote"><option value="">—</option>
         ${lotes.map(l => `<option value="${l.id}" ${l.id === preset.loteId ? 'selected' : ''}>${esc(l.nome)}</option>`).join('')}</select></div>
     </div>
     <div class="campo" style="margin-top:10px;"><label>Arquivo (PDF ou imagem) *</label>
       <input type="file" id="nf-arquivo" accept=".pdf,.jpg,.jpeg,.png,.xml"></div>
-    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:12px;">
-      <input type="checkbox" id="nf-gerar-fin" checked> Já lançar automaticamente no Financeiro</label>
+    <div style="margin-top:14px;">
+      <div class="campo"><label>Conferência com o Financeiro</label></div>
+      <div id="nf-conf" class="texto-dim2" style="font-size:12.5px;">Preencha a data e o valor da nota que eu procuro o lançamento que bate.</div>
+    </div>
     <div class="campo" style="margin-top:10px;"><label>Observações</label><textarea id="nf-obs" style="min-height:60px;"></textarea></div>
     <div class="acoes" style="margin-top:14px;"><button class="btn" id="nf-salvar">Salvar</button>
       <button class="btn-secundario" id="nf-fechar">Fechar</button></div>
@@ -1265,32 +1347,56 @@ function formNotaFiscal (preset, aoSalvar) {
   fundo.querySelector('#nf-fechar').onclick = fechar
   fundo.onclick = e => { if (e.target === fundo) fechar() }
 
+  const conf = fundo.querySelector('#nf-conf')
+  let pedido = 0
+  const conferir = async () => {
+    const valor = numeroBR(fundo.querySelector('#nf-valor').value)
+    const dataNf = fundo.querySelector('#nf-data').value
+    if (!valor || !dataNf) { conf.innerHTML = 'Preencha a data e o valor da nota que eu procuro o lançamento que bate.'; return }
+    const meu = ++pedido
+    conf.innerHTML = 'procurando no Financeiro...'
+    try {
+      const cands = await nfBuscarCandidatos(fundo.querySelector('#nf-tipo').value, valor, dataNf)
+      if (meu !== pedido) return // chegou resposta de uma digitação antiga
+      conf.classList.remove('texto-dim2')
+      conf.innerHTML = nfHtmlCandidatos(cands)
+    } catch (e) { if (meu === pedido) conf.innerHTML = `<span style="color:var(--warn-text);">Não deu pra conferir: ${esc(e.message)}</span>` }
+  }
+  let espera
+  const agendar = () => { clearTimeout(espera); espera = setTimeout(conferir, 400) }
+  ;['#nf-valor', '#nf-data', '#nf-tipo'].forEach(s => { const el = fundo.querySelector(s); el.oninput = agendar; el.onchange = agendar })
+
   fundo.querySelector('#nf-salvar').onclick = async () => {
     const el = fundo.querySelector('#nf-recado')
     const aviso = t => { el.textContent = t; el.classList.remove('oculto'); el.style.borderColor = 'var(--warn-text)'; el.style.color = 'var(--warn-text)' }
     const arquivo = fundo.querySelector('#nf-arquivo').files[0]
     if (!arquivo) { aviso('Selecione o arquivo da nota fiscal.'); return }
+    const valor = numeroBR(fundo.querySelector('#nf-valor').value) || 0
+    const destino = fundo.querySelector('input[name="nf-destino"]:checked')?.value || 'nada'
+    if (destino === 'novo' && !(valor > 0)) { aviso('Informe o valor pra criar o lançamento.'); return }
     const btn = fundo.querySelector('#nf-salvar'); btn.disabled = true; btn.textContent = 'Enviando...'
     try {
       const enviado = await enviarArquivo(arquivo, 'fazenda-nf')
       const tipoNf = fundo.querySelector('#nf-tipo').value
-      const valor = numeroBR(fundo.querySelector('#nf-valor').value) || 0
       const dataNf = fundo.querySelector('#nf-data').value
       const fornecedorCliente = fundo.querySelector('#nf-fc').value.trim() || null
       const numeroNf = fundo.querySelector('#nf-num').value.trim() || null
 
-      // se marcado, cria o lançamento financeiro já vinculado — NF de
-      // entrada (compra) vira saída de dinheiro, NF de saída (venda) vira entrada
       let lancamentoId = null
-      if (fundo.querySelector('#nf-gerar-fin').checked && valor > 0) {
+      if (destino === 'novo') {
+        // NF de entrada (compra) vira saída de dinheiro, NF de saída (venda) vira entrada
         const { data: lanc, error: erroLanc } = await db.from('lancamento_financeiro').insert({
           data_lancamento: dataNf, tipo: tipoNf === 'ENTRADA' ? 'SAIDA' : 'ENTRADA',
           centro_custo_id: FAZENDA_CENTRO_CUSTO_ID, valor, situacao: 'PENDENTE',
           descricao: `NF ${numeroNf ?? ''} — ${fornecedorCliente ?? 'sem fornecedor/cliente'}`.trim(),
+          comprovante_caminho: enviado.caminho, comprovante_nome: enviado.nome,
           registrado_por: PERFIL.pessoaId
         }).select('id').single()
-        if (erroLanc) { btn.disabled = false; btn.textContent = 'Salvar'; aviso('Nota salva, mas não deu pra gerar o lançamento financeiro: ' + erroLanc.message); }
+        if (erroLanc) aviso('Nota salva, mas não deu pra gerar o lançamento financeiro: ' + erroLanc.message)
         else lancamentoId = lanc.id
+      } else if (destino !== 'nada') {
+        await nfVincularLancamento(destino, { numeroNf, caminho: enviado.caminho, nomeArquivo: enviado.nome })
+        lancamentoId = destino
       }
 
       const { error } = await db.from('fazenda_nota_fiscal').insert({
@@ -1307,6 +1413,40 @@ function formNotaFiscal (preset, aoSalvar) {
       btn.disabled = false; btn.textContent = 'Salvar'
       aviso(e.message)
     }
+  }
+}
+
+// nota que já estava anexada sem vínculo: mesma conferência, depois
+function formVincularNota (nota, aoSalvar) {
+  const fundo = document.createElement('div')
+  fundo.className = 'modal-fundo'
+  fundo.innerHTML = `<div class="modal">
+    <h3>Conferir NF ${esc(nota.numero_nf || 's/nº')} com o Financeiro</h3>
+    <p class="texto-dim" style="font-size:12.5px;margin:0 0 12px;">${esc(nota.fornecedor_cliente || 'sem fornecedor/cliente')} · ${fmtData(nota.data)} · <b>R$ ${fmtNum(nota.valor)}</b></p>
+    <div id="nv-conf" class="texto-dim2" style="font-size:12.5px;">procurando no Financeiro...</div>
+    <div class="acoes" style="margin-top:14px;"><button class="btn" id="nv-salvar">Vincular</button>
+      <button class="btn-secundario" id="nv-fechar">Fechar</button></div>
+    <div class="recado oculto" id="nv-recado"></div>
+  </div>`
+  document.body.appendChild(fundo)
+  const fechar = () => fundo.remove()
+  fundo.querySelector('#nv-fechar').onclick = fechar
+  fundo.onclick = e => { if (e.target === fundo) fechar() }
+  const el = fundo.querySelector('#nv-recado')
+  const aviso = t => { el.textContent = t; el.classList.remove('oculto'); el.style.borderColor = 'var(--warn-text)'; el.style.color = 'var(--warn-text)' }
+  nfBuscarCandidatos(nota.tipo, Number(nota.valor), nota.data, nota.id)
+    .then(c => { const conf = fundo.querySelector('#nv-conf'); conf.classList.remove('texto-dim2'); conf.innerHTML = nfHtmlCandidatos(c, false) })
+    .catch(e => aviso(e.message))
+  fundo.querySelector('#nv-salvar').onclick = async () => {
+    const destino = fundo.querySelector('input[name="nf-destino"]:checked')?.value
+    if (!destino || destino === 'nada') { fechar(); return }
+    const btn = fundo.querySelector('#nv-salvar'); btn.disabled = true
+    try {
+      await nfVincularLancamento(destino, { numeroNf: nota.numero_nf, caminho: nota.arquivo_url, nomeArquivo: nota.nome_arquivo })
+      const { error } = await db.from('fazenda_nota_fiscal').update({ lancamento_financeiro_id: destino }).eq('id', nota.id)
+      if (error) throw error
+      fechar(); aoSalvar()
+    } catch (e) { btn.disabled = false; aviso(e.message) }
   }
 }
 
