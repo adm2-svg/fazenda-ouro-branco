@@ -1641,8 +1641,7 @@ function formLancamento (registro, aoSalvar) {
 // FINANCEIRO › RELATÓRIO ANUAL
 // Mesmo painel do ERP Gefoscal (Financeiro › Relatórios), recortado pra
 // fazenda: ano civil, o que entrou, o que saiu, resultado mês a mês,
-// despesa por categoria, a fazenda dentro do grupo (centro de custo) e
-// quanto o rebanho que está hoje na fazenda precisa render pra empatar
+// despesa por categoria e quanto o rebanho que está hoje na fazenda precisa render pra empatar
 // e pra bater a meta de retorno.
 //
 // De onde vem cada número:
@@ -1814,18 +1813,15 @@ async function relCarregar (ano) {
     .eq('centro_custo_id', FAZENDA_CENTRO_CUSTO_ID).gte('data_lancamento', a).lte('data_lancamento', b).order('id'))
   const receitasDe = (a, b) => relBuscarTudo(() => db.from('fazenda_receita')
     .select('id,data,qtde,valor_liquido,lote_id').gte('data', a).lte('data', b).order('id'))
-  const [lancs, receitas, lancsA, receitasA, grupo, lotes, movs, pesagens, params] = await Promise.all([
+  const [lancs, receitas, lancsA, receitasA, lotes, movs, pesagens, params] = await Promise.all([
     lancsDe(ini, fim), receitasDe(ini, fim), lancsDe(iniA, fimA), receitasDe(iniA, fimA),
-    // o grupo inteiro; quem não tem o módulo Financeiro só enxerga a fazenda (RLS)
-    relBuscarTudo(() => db.from('lancamento_financeiro').select('id,valor,situacao,centro:centro_custo_id(nome)')
-      .eq('tipo', 'SAIDA').gte('data_lancamento', ini).lte('data_lancamento', fim).order('id')).catch(() => []),
     relBuscarTudo(() => db.from('fazenda_lote').select('id,qtde_inicial,peso_medio_entrada').eq('status', 'EM_CONFINAMENTO').order('id')),
     relBuscarTudo(() => db.from('fazenda_movimentacao').select('id,lote_id,tipo_mov,qtde').order('id')),
     relBuscarTudo(() => db.from('fazenda_pesagem_individual').select('id,id_brinco,id_sn,peso_kg,data')
       .order('data', { ascending: false }).order('id')),
     db.from('fazenda_parametro_retorno').select('*').eq('ano', ano).maybeSingle()
   ])
-  return { lancs, receitas, lancsA, receitasA, grupo, lotes, movs, pesagens, params: params.data || null }
+  return { lancs, receitas, lancsA, receitasA, lotes, movs, pesagens, params: params.data || null }
 }
 
 // soma um ano; `ateMes` corta no mesmo mês pra comparar ano com ano de forma justa
@@ -1865,13 +1861,6 @@ function relCalcular (ano, d) {
   const custo = atual.despesas + atual.gado
   const resultado = atual.entradas - custo
 
-  const porCentro = {}
-  for (const g of d.grupo) {
-    if (g.situacao === 'PENDENTE') continue
-    const n = g.centro?.nome || 'Sem centro de custo'
-    porCentro[n] = (porCentro[n] || 0) + (Number(g.valor) || 0)
-  }
-
   // rebanho na fazenda hoje
   const ativos = new Set(d.lotes.map(l => l.id))
   let cabecas = d.lotes.reduce((s, l) => s + (Number(l.qtde_inicial) || 0), 0)
@@ -1903,7 +1892,7 @@ function relCalcular (ano, d) {
     ano, ateMes, atual, anterior, custo, resultado,
     custoA: anterior.despesas + anterior.gado,
     resultadoA: anterior.entradas - anterior.despesas - anterior.gado,
-    porCentro, cabecas, pesoMedio, origemPeso, pesoVivo, arrobas, margem, rendimento, alvo,
+    cabecas, pesoMedio, origemPeso, pesoVivo, arrobas, margem, rendimento, alvo,
     faltaEmpate: Math.max(0, custo - atual.entradas),
     faltaMeta: Math.max(0, alvo - atual.entradas),
     retorno: custo ? resultado / custo * 100 : null
@@ -1938,9 +1927,6 @@ async function subRelatorioAnual (alvo) {
   const top6 = cats.slice(0, 6); const resto = cats.slice(6)
   const paraRosca = (resto.length ? [...top6, { nome: `outras ${resto.length} categorias`, valor: resto.reduce((s, x) => s + x.valor, 0) }] : top6)
     .map(x => ({ rotulo: x.nome, valor: x.valor }))
-  const centros = Object.entries(r.porCentro).map(([nome, valor]) => ({ nome, valor })).sort((x, y) => y.valor - x.valor)
-  const totalGrupo = centros.reduce((s, x) => s + x.valor, 0)
-  const faz = r.porCentro['Fazenda Ouro Branco'] || 0
 
   const porCab = v => r.cabecas ? relReaisCent(v / r.cabecas) : '—'
   const porArroba = v => r.arrobas ? relReaisCent(v / r.arrobas) : '—'
@@ -2057,16 +2043,7 @@ async function subRelatorioAnual (alvo) {
         <span class="texto-dim2" style="font-size:12px;">sem a compra de gado (${esc(relReais(a.gado))})${catsA.length ? ` · a seta compara com ${esc(comparaTxt)}` : ''}</span>
       </div>
       ${cats.length ? `<div class="pnl-rosca">${relRosca(paraRosca, cores)}</div>${relRanking(cats, catsA.length ? catsA : null, cores)}` : '<p class="vazio">Nenhuma despesa no ano.</p>'}
-    </div>
-
-    ${centros.length > 1 ? `<div class="panel pnl-bloco pnl-secao">
-      <div class="cabeca-secao">
-        <h3>Centro de custo · gastos do grupo em ${r.ano}</h3>
-        <span class="texto-dim2" style="font-size:12px;">a fazenda é ${totalGrupo ? fmtNum(faz / totalGrupo * 100, 1) : 0}% de ${esc(relReais(totalGrupo))}</span>
-      </div>
-      ${relRanking(centros, null, null, 6, 'Fazenda Ouro Branco')}
-      <p class="texto-dim2 pnl-ret-nota">"Sem centro de custo" é o que foi importado do CIEvolution sem dizer a área — o que é da fazenda já está separado.</p>
-    </div>` : ''}`
+    </div>`
 
   const recarregar = () => subRelatorioAnual(alvo)
   $('#rel-ano').onchange = e => { REL.ano = Number(e.target.value); recarregar() }
