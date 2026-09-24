@@ -140,13 +140,29 @@ html[data-largura="cheio"] body{zoom:1.12;}
 .bloco.alerta{border-color:var(--warn-text);box-shadow:inset 3px 0 0 var(--warn-text);}
 .bloco.bom{border-color:var(--good-text);box-shadow:inset 3px 0 0 var(--good-text);}
 .bloco .rot{color:var(--dim2);font-size:10.5px;text-transform:uppercase;letter-spacing:.12em;
-  display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  display:flex;align-items:center;justify-content:flex-start;gap:7px;}
+.bloco .rot-icone{font-size:13px;flex:none;}
 .bloco .val{font-family:var(--serif);font-size:32px;line-height:1.08;margin-top:10px;letter-spacing:-.01em;overflow-wrap:break-word;}
 .bloco .nota{color:var(--dim);font-size:12.5px;margin-top:7px;}
 .bloco.alerta .val{color:var(--warn-text);}
 .bloco.bom .val{color:var(--good-text);}
 @media (max-width:640px){.bloco .val{font-size:24px;}}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;}
+/* ---- ficha do lote: cabeçalho com o nome bem visível, e o "resumo
+   rápido" que mostra a última atividade de cada aba (pesagem/trato/
+   sanidade/venda) num relance, sem precisar clicar aba por aba ---- */
+.lote-cabecalho{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:18px;}
+.lote-cabecalho h2{font-size:24px;margin:0 0 7px;}
+.lote-cabecalho-meta{display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:12.5px;}
+.resumo-rapido{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:20px;}
+.rr-item{background:var(--surface2);border:1px solid var(--line2);border-radius:10px;padding:10px 14px;
+  text-align:left;color:var(--dim);font-size:11.5px;cursor:pointer;font-family:inherit;
+  transition:border-color .15s ease,background .15s ease;}
+.rr-item:hover{border-color:var(--rust);background:var(--hover-bg);}
+.rr-item b{display:block;margin-top:4px;font-size:14px;color:var(--txt);font-family:var(--serif);font-weight:600;}
+.rr-item .rr-nota{display:block;margin-top:3px;font-size:10.5px;color:var(--dim2);}
+.rr-item.rr-alerta{border-color:var(--warn-text);}
+.rr-item.rr-alerta .rr-nota{color:var(--warn-text);font-weight:700;}
 .subabas{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;}
 .subabas button{border:1px solid var(--line2);background:var(--surface2);color:var(--dim);border-radius:20px;padding:8px 16px;font-size:12.5px;font-weight:600;cursor:pointer;}
 .subabas button.ativo{background:var(--rust);border-color:var(--rust);color:#fff;}
@@ -158,8 +174,12 @@ html[data-largura="cheio"] body{zoom:1.12;}
    linha inteira sozinho, empurrando o resto pra baixo */
 .campo{display:flex;flex-direction:column;gap:5px;flex:1 1 160px;min-width:130px;max-width:260px;}
 .campo input[type="date"],.campo input[type="month"]{min-width:0;}
+/* campo de data pede mais espaço que os outros (o comentário acima já
+   avisava: 250-300px em alguns navegadores/idiomas) — sem essa folga o
+   campo fica espremido ao lado da quantidade e parece "grudado" nela */
+.campo:has(input[type="date"]),.campo:has(input[type="month"]){min-width:240px;}
 .campo label{font-size:11px;color:var(--dim2);text-transform:uppercase;letter-spacing:.04em;}
-.form-grade{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;}
+.form-grade{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;}
 .acoes{display:flex;gap:10px;flex-wrap:wrap;}
 .tabela-scroll{overflow:auto;}
 table{width:100%;border-collapse:collapse;min-width:700px;}

@@ -47,8 +47,8 @@ async function abrirArquivo (caminho) {
   window.open(data.signedUrl, '_blank', 'noopener')
 }
 
-function kpi (rot, val, classe = '', nota = '') {
-  return `<div class="bloco ${classe}"><div class="rot">${esc(rot)}</div><div class="val">${val}</div>${nota ? `<div class="nota">${esc(nota)}</div>` : ''}</div>`
+function kpi (rot, val, classe = '', nota = '', icone = '') {
+  return `<div class="bloco ${classe}"><div class="rot">${icone ? `<span class="rot-icone">${icone}</span>` : ''}${esc(rot)}</div><div class="val">${val}</div>${nota ? `<div class="nota">${esc(nota)}</div>` : ''}</div>`
 }
 
 // ----- gráficos simples em HTML/CSS (sem lib externa, mesmo espírito
@@ -189,6 +189,12 @@ $('#btn-sair').onclick = async () => { await db.auth.signOut(); location.reload(
 // SESSÃO E PERMISSÃO
 // ==================================================================
 let PERFIL = { userId: '', email: '', nome: '', pessoaId: null, papeis: [], editavel: false }
+
+// onde a pessoa está navegando agora — o Assistente usa isso pra saber
+// quando deve "trocar de foco" (virar especialista em sanidade animal
+// dentro da aba Sanidade de um lote, ou especialista em confinamento
+// dentro do resto da ficha do lote), sem precisar de outro widget
+let CONTEXTO_ASSISTENTE = { pagina: null, subaba: null }
 
 async function abrirApp () {
   const { data: { user } } = await db.auth.getUser()
@@ -372,6 +378,7 @@ function irPara (chave) {
   $('#titulo-pagina').textContent = p.nome
   $('#subtitulo-pagina').textContent = ''
   $('#area').innerHTML = ''
+  CONTEXTO_ASSISTENTE = { pagina: chave, subaba: null }
   p.render()
 }
 
@@ -1414,6 +1421,163 @@ function abrirPesagemFoto (lotes, aoRegistrarUma) {
   renderizarModo()
 }
 
+// lê UMA foto de página de caderneta com vários animais (brinco/numeração +
+// peso) e devolve uma tabela editável pra conferir/corrigir e salvar tudo de
+// uma vez — pensado pra quem esqueceu de fotografar um por um no curral e já
+// tem a pesagem toda anotada na caderneta. Reusa os mesmos helpers e o mesmo
+// destino (fazenda_pesagem_individual) do fluxo de foto único.
+function abrirPesagemListaFoto (lotes, aoRegistrarVarias) {
+  const fundo = document.createElement('div')
+  fundo.className = 'modal-fundo'
+  fundo.innerHTML = `<div class="modal" style="max-width:680px;">
+    <h3>📋 Ler lista da caderneta (IA)</h3>
+    <p class="texto-dim2" style="font-size:12px;margin:0 0 12px;">Tira uma foto da página com a lista de brincos/numeração + peso — a IA separa linha por linha pra você conferir e salvar tudo de uma vez. Animal sem brinco físico? Deixa como "S/N" na linha dele.</p>
+    <div id="pl-corpo"></div>
+    <div class="acoes" style="margin-top:14px;"><button class="btn-secundario" id="pl-fechar">Fechar</button></div>
+  </div>`
+  document.body.appendChild(fundo)
+
+  let foto = null // { blob, previewUrl }
+  let linhas = [] // { id, incluir, tipo, identificacao, peso, confianca, observacao }
+  let dataComum = hojeISO()
+  const limparFoto = () => { if (foto) URL.revokeObjectURL(foto.previewUrl); foto = null }
+  const fechar = () => { limparFoto(); fundo.remove() }
+  fundo.querySelector('#pl-fechar').onclick = fechar
+  fundo.onclick = e => { if (e.target === fundo) fechar() }
+
+  const corpo = fundo.querySelector('#pl-corpo')
+
+  const renderCaptura = () => {
+    corpo.innerHTML = `
+      <div id="pl-preview" style="aspect-ratio:4/3;max-width:320px;border:1px dashed var(--line2);border-radius:9px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--surface2);cursor:pointer;margin:0 auto 12px;">
+        ${foto ? `<img src="${foto.previewUrl}" style="width:100%;height:100%;object-fit:cover;">` : `<span style="font-size:28px;">📓</span>`}
+      </div>
+      <input type="file" accept="image/*" capture="environment" id="pl-input" class="oculto">
+      <button class="btn" id="pl-analisar" style="width:100%;" ${!foto ? 'disabled' : ''}>Analisar com IA</button>
+      <div id="pl-resultado" style="margin-top:14px;"></div>`
+    corpo.querySelector('#pl-preview').onclick = () => corpo.querySelector('#pl-input').click()
+    corpo.querySelector('#pl-input').onchange = async e => {
+      const arquivo = e.target.files[0]; if (!arquivo) return
+      limparFoto()
+      foto = { blob: await comprimirFoto(arquivo), previewUrl: '' }
+      foto.previewUrl = URL.createObjectURL(foto.blob)
+      renderCaptura()
+    }
+    corpo.querySelector('#pl-analisar').onclick = analisar
+  }
+
+  const analisar = async () => {
+    const btn = corpo.querySelector('#pl-analisar')
+    btn.disabled = true; btn.textContent = 'Analisando...'
+    const resultadoEl = corpo.querySelector('#pl-resultado')
+    resultadoEl.innerHTML = ''
+    try {
+      const body = { foto: { data: await blobParaBase64(foto.blob), media_type: 'image/jpeg' } }
+      const { data, error } = await db.functions.invoke('fazenda-pesagem-foto-lista', { body })
+      if (error || data?.erro) {
+        let detalhe = data?.erro || error?.message || 'Erro ao analisar.'
+        if (error?.context?.json) { try { const c = await error.context.json(); detalhe = c?.erro || detalhe } catch {} }
+        resultadoEl.innerHTML = `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">${esc(detalhe)}</div>`
+        return
+      }
+      const extraido = data.extraido || {}
+      if (extraido.data) dataComum = extraido.data
+      linhas = (extraido.itens || []).map((it, i) => ({
+        id: 'l' + i,
+        incluir: true,
+        tipo: it.tipo_sugerido === 'Brinco' ? 'Brinco' : 'S/N',
+        identificacao: it.identificacao || '',
+        peso: it.peso_kg != null ? fmtNum(it.peso_kg, 1) : '',
+        confianca: it.confianca || null,
+        observacao: it.observacao || null
+      }))
+      if (!linhas.length) {
+        resultadoEl.innerHTML = `<div class="recado">Não consegui identificar nenhuma linha legível nessa foto. Tenta tirar de novo com mais luz/mais perto, ou linha por linha se a letra tiver muito difícil.</div>`
+        return
+      }
+      renderTabela()
+    } finally {
+      btn.disabled = false; btn.textContent = 'Analisar com IA'
+    }
+  }
+
+  const renderTabela = () => {
+    const resultadoEl = corpo.querySelector('#pl-resultado')
+    resultadoEl.innerHTML = `
+      <div class="form-grade" style="margin-bottom:10px;">
+        <div class="campo"><label>Data da pesagem</label><input type="date" id="pl-data" value="${esc(dataComum)}"></div>
+        <div class="campo"><label>Lote/pasto (aplica a todos)</label><select id="pl-lote"><option value="">— sem lote —</option>
+          ${lotes.map(l => `<option value="${l.id}">${esc(l.nome)}</option>`).join('')}</select></div>
+      </div>
+      <div class="tabela-scroll" style="max-height:360px;">
+        <table><thead><tr><th></th><th>Tipo</th><th>Identificação</th><th class="num">Peso (kg)</th><th>Confiança</th></tr></thead><tbody>
+          ${linhas.map(l => `<tr data-linha="${l.id}">
+            <td><input type="checkbox" class="pl-check" ${l.incluir ? 'checked' : ''}></td>
+            <td><select class="pl-tipo" style="min-width:90px;">
+              <option value="Brinco" ${l.tipo === 'Brinco' ? 'selected' : ''}>Brinco</option>
+              <option value="S/N" ${l.tipo === 'S/N' ? 'selected' : ''}>S/N</option>
+            </select></td>
+            <td><input class="pl-ident" style="width:120px;" value="${esc(l.identificacao)}"></td>
+            <td class="num"><input class="pl-peso" inputmode="decimal" style="text-align:right;width:80px;" value="${esc(l.peso)}"></td>
+            <td>${badgeConfiancaFoto(l.confianca)}${l.observacao ? `<div class="texto-dim2" style="font-size:10.5px;margin-top:2px;">${esc(l.observacao)}</div>` : ''}</td>
+          </tr>`).join('')}
+        </tbody></table>
+      </div>
+      <div class="acoes" style="margin-top:12px;justify-content:space-between;">
+        <span class="texto-dim2" id="pl-contagem" style="font-size:12px;">${linhas.filter(l => l.incluir).length} de ${linhas.length} selecionado(s)</span>
+        <button class="btn" id="pl-confirmar">✓ Salvar selecionados</button>
+      </div>
+      <div class="recado oculto" id="pl-erro-confirma"></div>`
+
+    const atualizarContagem = () => {
+      resultadoEl.querySelector('#pl-contagem').textContent = `${linhas.filter(l => l.incluir).length} de ${linhas.length} selecionado(s)`
+    }
+    resultadoEl.querySelectorAll('tr[data-linha]').forEach(tr => {
+      const linha = linhas.find(l => l.id === tr.dataset.linha)
+      tr.querySelector('.pl-check').onchange = e => { linha.incluir = e.target.checked; atualizarContagem() }
+      tr.querySelector('.pl-tipo').onchange = e => { linha.tipo = e.target.value }
+      tr.querySelector('.pl-ident').oninput = e => { linha.identificacao = e.target.value }
+      tr.querySelector('.pl-peso').oninput = e => { linha.peso = e.target.value }
+    })
+
+    resultadoEl.querySelector('#pl-confirmar').onclick = async () => {
+      const data = resultadoEl.querySelector('#pl-data').value || hojeISO()
+      const loteId = resultadoEl.querySelector('#pl-lote').value || null
+      const avisoEl = resultadoEl.querySelector('#pl-erro-confirma')
+      const aviso = t => { avisoEl.textContent = t; avisoEl.classList.remove('oculto') }
+      avisoEl.classList.add('oculto')
+      const selecionadas = linhas.filter(l => l.incluir)
+      if (!selecionadas.length) { aviso('Selecione ao menos uma linha.'); return }
+      for (const l of selecionadas) {
+        if (!l.identificacao.trim()) { aviso(`Falta a identificação de uma das linhas selecionadas.`); return }
+        const peso = numeroBR(l.peso)
+        if (peso === null || peso <= 0) { aviso(`Peso inválido em "${l.identificacao || '—'}".`); return }
+      }
+      const btn = resultadoEl.querySelector('#pl-confirmar')
+      btn.disabled = true; btn.textContent = 'Salvando...'
+      const registros = selecionadas.map(l => ({
+        tipo_identificacao: l.tipo,
+        id_brinco: l.tipo === 'Brinco' ? l.identificacao.trim() : null,
+        id_sn: l.tipo === 'S/N' ? l.identificacao.trim() : null,
+        peso_kg: numeroBR(l.peso),
+        data, lote_id: loteId, criado_por: PERFIL.pessoaId
+      }))
+      const { error: erroSalvar } = await db.from('fazenda_pesagem_individual').insert(registros)
+      if (erroSalvar) {
+        aviso('Não deu pra salvar: ' + erroSalvar.message)
+        btn.disabled = false; btn.textContent = '✓ Salvar selecionados'
+        return
+      }
+      linhas = linhas.filter(l => !l.incluir)
+      limparFoto()
+      aoRegistrarVarias()
+      if (linhas.length) renderTabela(); else renderCaptura()
+    }
+  }
+
+  renderCaptura()
+}
+
 async function subPesagemIndividual (alvo) {
   const [{ data: pesagens }, { data: lotes }] = await Promise.all([
     db.from('fazenda_pesagem_individual').select('*, lote:lote_id(nome)').order('peso_kg', { ascending: false }),
@@ -1517,6 +1681,7 @@ function renderPesagemIndividual (alvo) {
     ${PERFIL.editavel ? `<div class="acoes" style="margin-bottom:16px;">
       <button class="btn" id="pi-novo">+ Nova pesagem</button>
       <button class="btn-secundario" id="pi-foto">📷 Pesagem por foto (IA)</button>
+      <button class="btn-secundario" id="pi-foto-lista">📋 Ler lista da caderneta (IA)</button>
     </div>` : ''}
 
     ${PERFIL.editavel ? `<div class="panel" style="padding:14px 18px;margin-bottom:16px;">
@@ -1556,6 +1721,7 @@ function renderPesagemIndividual (alvo) {
   if (PERFIL.editavel) {
     $('#pi-novo').onclick = () => formPesagemIndividual(null, () => subPesagemIndividual(alvo))
     $('#pi-foto').onclick = () => abrirPesagemFoto(lotes, () => subPesagemIndividual(alvo))
+    $('#pi-foto-lista').onclick = () => abrirPesagemListaFoto(lotes, () => subPesagemIndividual(alvo))
     alvo.querySelectorAll('[data-editar-pi]').forEach(b => {
       b.onclick = () => formPesagemIndividual(todos.find(x => x.id === b.dataset.editarPi), () => subPesagemIndividual(alvo))
     })
@@ -1735,12 +1901,13 @@ async function paginaLoteDetalhe (loteId) {
   const { data: lote, error } = await db.from('fazenda_lote').select('*').eq('id', loteId).single()
   if (error) { area.innerHTML = `<p class="vazio">${esc(error.message)}</p>`; return }
   $('#subtitulo-pagina').textContent = lote.pasto ? `Pasto: ${lote.pasto}` : 'Detalhe do lote'
+  CONTEXTO_ASSISTENTE = { pagina: 'lote_detalhe', subaba: 'movimentacoes', loteId, loteNome: lote.nome }
 
   const [{ data: pesagens }, { data: trato }, { data: sanidade }, { data: receitas }] = await Promise.all([
     db.from('fazenda_pesagem').select('*').eq('lote_id', loteId).order('data', { ascending: false }),
-    db.from('fazenda_trato').select('valor_total').eq('lote_id', loteId),
-    db.from('fazenda_sanidade').select('valor_total').eq('lote_id', loteId),
-    db.from('fazenda_receita').select('valor_liquido').eq('lote_id', loteId)
+    db.from('fazenda_trato').select('data,valor_total').eq('lote_id', loteId).order('data', { ascending: false }),
+    db.from('fazenda_sanidade').select('data,valor_total,proxima_aplicacao').eq('lote_id', loteId).order('data', { ascending: false }),
+    db.from('fazenda_receita').select('data,valor_liquido').eq('lote_id', loteId).order('data', { ascending: false })
   ])
   const custoTrato = (trato || []).reduce((s, t) => s + Number(t.valor_total || 0), 0)
   const custoSanidade = (sanidade || []).reduce((s, sa) => s + Number(sa.valor_total || 0), 0)
@@ -1750,18 +1917,43 @@ async function paginaLoteDetalhe (loteId) {
   const dias = Math.max(0, Math.floor((new Date() - new Date(lote.data_entrada + 'T00:00:00')) / 864e5))
   const custoTotal = Number(lote.custo_total_inicial || 0) + custoTrato + custoSanidade
 
+  // "resumo rápido" — bate o olho e já vê a última atividade de cada aba
+  // sem precisar clicar em cada uma; é o que junta as abas visualmente
+  const ultimaPesagem = pesagens?.[0]?.data ?? null
+  const ultimoTrato = trato?.[0]?.data ?? null
+  const ultimaSanidade = sanidade?.[0]?.data ?? null
+  const proximaSanidade = (sanidade || []).map(s => s.proxima_aplicacao).filter(Boolean).sort()[0] ?? null
+  const sanidadeAtrasada = proximaSanidade && proximaSanidade < hojeISO()
+  const ultimaReceita = receitas?.[0]?.data ?? null
+
   area.innerHTML = `
-    <div class="acoes" style="margin-bottom:14px;">
-      <button class="btn-secundario mini" id="ld-voltar">← voltar pra lista</button>
-      ${PERFIL.editavel ? `<button class="btn-secundario mini" id="ld-editar">Editar lote</button>` : ''}
+    <div class="lote-cabecalho">
+      <div>
+        <h2>${esc(lote.nome ?? 'Lote')}</h2>
+        <div class="lote-cabecalho-meta">
+          ${lote.status ? `<span class="chip">${esc(lote.status)}</span>` : ''}
+          ${lote.pasto ? `<span class="texto-dim2">📍 ${esc(lote.pasto)}</span>` : ''}
+          ${lote.qtde_inicial ? `<span class="texto-dim2">🐂 ${fmtNum(lote.qtde_inicial, 0)} na entrada</span>` : ''}
+        </div>
+      </div>
+      <div class="acoes">
+        <button class="btn-secundario mini" id="ld-voltar">← voltar pra lista</button>
+        ${PERFIL.editavel ? `<button class="btn-secundario mini" id="ld-editar">Editar lote</button>` : ''}
+      </div>
     </div>
     <div class="resumo-topo">
-      ${kpi('Dias em confinamento', fmtNum(dias, 0))}
-      ${kpi('Peso atual', pesoAtual ? fmtNum(pesoAtual, 1) + ' kg' : '—')}
-      ${kpi('Ganho de peso', ganho ? fmtNum(ganho, 1) + ' kg' : '—')}
-      ${kpi('Custo total', 'R$ ' + fmtNum(custoTotal))}
-      ${kpi('Receita', 'R$ ' + fmtNum(totalReceita))}
-      ${kpi('Resultado', 'R$ ' + fmtNum(totalReceita - custoTotal), totalReceita - custoTotal < 0 ? 'alerta' : 'bom')}
+      ${kpi('Dias em confinamento', fmtNum(dias, 0), '', '', '📅')}
+      ${kpi('Peso atual', pesoAtual ? fmtNum(pesoAtual, 1) + ' kg' : '—', '', '', '⚖️')}
+      ${kpi('Ganho de peso', ganho ? fmtNum(ganho, 1) + ' kg' : '—', '', '', '📈')}
+      ${kpi('Custo total', 'R$ ' + fmtNum(custoTotal), '', '', '💸')}
+      ${kpi('Receita', 'R$ ' + fmtNum(totalReceita), '', '', '💰')}
+      ${kpi('Resultado', 'R$ ' + fmtNum(totalReceita - custoTotal), totalReceita - custoTotal < 0 ? 'alerta' : 'bom', '', '🎯')}
+    </div>
+    <div class="resumo-rapido">
+      <button class="rr-item" data-ir-sub="pesagens">📏 Última pesagem<b>${ultimaPesagem ? fmtData(ultimaPesagem) : '—'}</b></button>
+      <button class="rr-item" data-ir-sub="trato">🌾 Último trato<b>${ultimoTrato ? fmtData(ultimoTrato) : '—'}</b></button>
+      <button class="rr-item ${sanidadeAtrasada ? 'rr-alerta' : ''}" data-ir-sub="sanidade">🩺 Sanidade<b>${ultimaSanidade ? fmtData(ultimaSanidade) : '—'}</b>${proximaSanidade ? `<span class="rr-nota">${sanidadeAtrasada ? '⚠ atrasada: ' : 'próxima: '}${fmtData(proximaSanidade)}</span>` : ''}</button>
+      <button class="rr-item" data-ir-sub="receitas">💰 Última venda<b>${ultimaReceita ? fmtData(ultimaReceita) : '—'}</b></button>
     </div>
     <div class="subabas">
       ${[['movimentacoes', 'Movimentações'], ['pesagens', 'Pesagens'], ['trato', 'Trato'], ['sanidade', 'Sanidade'], ['receitas', 'Receitas'], ['notas', 'Notas fiscais']]
@@ -1771,6 +1963,11 @@ async function paginaLoteDetalhe (loteId) {
 
   $('#ld-voltar').onclick = () => irPara('lotes')
   if (PERFIL.editavel) $('#ld-editar').onclick = () => formLote(lote, () => paginaLoteDetalhe(loteId))
+  const irParaSubaba = sub => {
+    area.querySelectorAll('.subabas button').forEach(x => x.classList.toggle('ativo', x.dataset.sub === sub))
+    abrirSubLote(sub, loteId)
+  }
+  area.querySelectorAll('[data-ir-sub]').forEach(b => { b.onclick = () => irParaSubaba(b.dataset.irSub) })
   area.querySelectorAll('.subabas button').forEach(b => {
     b.onclick = () => {
       area.querySelectorAll('.subabas button').forEach(x => x.classList.toggle('ativo', x === b))
@@ -1783,6 +1980,7 @@ async function paginaLoteDetalhe (loteId) {
 function abrirSubLote (sub, loteId) {
   const alvo = $('#sub-lote')
   alvo.innerHTML = `<p class="texto-dim2">carregando...</p>`
+  CONTEXTO_ASSISTENTE = { pagina: 'lote_detalhe', subaba: sub, loteId, loteNome: CONTEXTO_ASSISTENTE.loteId === loteId ? CONTEXTO_ASSISTENTE.loteNome : null }
   if (sub === 'movimentacoes') subMovimentacoes(alvo, loteId)
   if (sub === 'pesagens') subPesagens(alvo, loteId)
   if (sub === 'trato') subTrato(alvo, loteId)
@@ -1839,7 +2037,8 @@ async function subPesagens (alvo, loteId) {
   const { data } = await db.from('fazenda_pesagem').select('*').eq('lote_id', loteId).order('data', { ascending: false })
   const lista = data || []
   alvo.innerHTML = blocoListaSimples('Pesagens',
-    PERFIL.editavel ? `<button class="btn-secundario mini" id="ps-novo">+ nova</button>` : '',
+    PERFIL.editavel ? `<button class="btn-secundario mini" id="ps-foto">📷 Pesagem por foto (IA)</button>
+      <button class="btn-secundario mini" id="ps-novo">+ nova</button>` : '',
     `<table><thead><tr><th>Data</th><th class="num">Qtde pesada</th><th class="num">Peso médio</th><th class="num">Peso total</th><th>Obs</th>${PERFIL.editavel ? '<th></th>' : ''}</tr></thead><tbody>
       ${lista.map(p => `<tr><td class="texto-dim2">${fmtData(p.data)}</td><td class="num">${fmtNum(p.qtde_pesada, 0)}</td>
         <td class="num">${fmtNum(p.peso_medio, 1)} kg</td><td class="num">${fmtNum(p.peso_total, 1)} kg</td><td class="texto-dim">${esc(p.observacoes ?? '—')}</td>
@@ -1848,6 +2047,7 @@ async function subPesagens (alvo, loteId) {
     </tbody></table>`)
   if (PERFIL.editavel) {
     $('#ps-novo').onclick = () => formPesagem(loteId, null, () => subPesagens(alvo, loteId))
+    $('#ps-foto').onclick = () => abrirPesagemLoteFoto(loteId, () => subPesagens(alvo, loteId))
     alvo.querySelectorAll('[data-editar]').forEach(b => {
       b.onclick = () => formPesagem(loteId, lista.find(x => x.id === b.dataset.editar), () => subPesagens(alvo, loteId))
     })
@@ -1868,18 +2068,100 @@ function formPesagem (loteId, registro, aoSalvar) {
   }, aoSalvar)
 }
 
+// ----- Pesagem do LOTE por foto (IA) — diferente da pesagem individual
+// por brinco: aqui é uma foto só (ticket da balança, visor, ou até uma
+// anotação) e a IA tenta ler quantidade pesada + peso médio/total do
+// grupo inteiro. Sempre mostra os campos editáveis antes de gravar. -----
+function abrirPesagemLoteFoto (loteId, aoRegistrar) {
+  const fundo = document.createElement('div')
+  fundo.className = 'modal-fundo'
+  fundo.innerHTML = `<div class="modal" style="max-width:480px;">
+    <h3>📷 Pesagem por foto (IA)</h3>
+    <p class="texto-dim2" style="font-size:12.5px;margin:-6px 0 14px;">Tira foto do ticket da balança, do visor ou da anotação — a IA lê e você confere antes de salvar.</p>
+    <input type="file" id="plf-arquivo" accept="image/*" capture="environment">
+    <p class="texto-dim2" id="plf-status" style="font-size:12.5px;margin-top:10px;"></p>
+    <div id="plf-resultado"></div>
+    <div class="acoes" style="margin-top:14px;"><button class="btn-secundario" id="plf-fechar">Fechar</button></div>
+  </div>`
+  document.body.appendChild(fundo)
+  const fechar = () => fundo.remove()
+  fundo.querySelector('#plf-fechar').onclick = fechar
+  fundo.onclick = e => { if (e.target === fundo) fechar() }
+
+  fundo.querySelector('#plf-arquivo').onchange = async e => {
+    const arquivo = e.target.files[0]
+    if (!arquivo) return
+    const status = fundo.querySelector('#plf-status')
+    status.textContent = 'Lendo a foto...'
+    fundo.querySelector('#plf-resultado').innerHTML = ''
+    try {
+      const comprimida = await comprimirFoto(arquivo)
+      const b64 = await blobParaBase64(comprimida)
+      const { data, error } = await db.functions.invoke('fazenda-pesagem-lote-foto', { body: { foto: { data: b64, media_type: 'image/jpeg' } } })
+      if (error || data?.erro) { status.textContent = data?.erro || error?.message || 'Não deu pra ler a foto.'; return }
+      status.textContent = ''
+      renderResultadoPesagemLoteFoto(fundo.querySelector('#plf-resultado'), data.extraido, async registro => {
+        const { error: erroSalvar } = await db.from('fazenda_pesagem').insert({ ...registro, lote_id: loteId, criado_por: PERFIL.pessoaId })
+        if (erroSalvar) { alert(erroSalvar.message); return false }
+        fechar(); aoRegistrar()
+        return true
+      })
+    } catch (e2) {
+      status.textContent = e2.message || 'Não deu pra processar a foto.'
+    }
+  }
+}
+function renderResultadoPesagemLoteFoto (alvoEl, extraido, aoConfirmar) {
+  alvoEl.innerHTML = `
+    <div class="panel" style="padding:14px 16px;margin-top:12px;">
+      ${extraido.observacao ? `<p class="texto-dim2" style="font-size:12px;margin:0 0 10px;">⚠️ ${esc(extraido.observacao)}</p>` : ''}
+      ${badgeConfiancaFoto(extraido.confianca)}
+      <div class="form-grade" style="margin-top:8px;">
+        <div class="campo"><label>Data</label><input type="date" id="plf-data" value="${esc(extraido.data || hojeISO())}"></div>
+        <div class="campo"><label>Quantidade pesada</label><input id="plf-qtd" inputmode="decimal" value="${extraido.qtde_pesada != null ? fmtNum(extraido.qtde_pesada, 0) : ''}"></div>
+        <div class="campo"><label>Peso médio (kg)</label><input id="plf-medio" inputmode="decimal" value="${extraido.peso_medio_kg != null ? fmtNum(extraido.peso_medio_kg, 1) : ''}"></div>
+        <div class="campo"><label>Peso total (kg)</label><input id="plf-total" inputmode="decimal" value="${extraido.peso_total_kg != null ? fmtNum(extraido.peso_total_kg, 1) : ''}"></div>
+      </div>
+      <div class="acoes" style="margin-top:12px;"><button class="btn" id="plf-confirmar">✓ Confirmar e salvar</button></div>
+      <div class="recado oculto" id="plf-erro"></div>
+    </div>`
+  alvoEl.querySelector('#plf-confirmar').onclick = async () => {
+    const data = alvoEl.querySelector('#plf-data').value
+    const qtde = numeroBR(alvoEl.querySelector('#plf-qtd').value)
+    const medio = numeroBR(alvoEl.querySelector('#plf-medio').value)
+    const total = numeroBR(alvoEl.querySelector('#plf-total').value)
+    const el = alvoEl.querySelector('#plf-erro')
+    const aviso = t => { el.textContent = t; el.classList.remove('oculto') }
+    if (!data) { aviso('Informe a data.'); return }
+    if (qtde === null || qtde <= 0) { aviso('Informe a quantidade pesada.'); return }
+    if (medio === null || medio <= 0) { aviso('Informe o peso médio.'); return }
+    const btn = alvoEl.querySelector('#plf-confirmar'); btn.disabled = true; btn.textContent = 'Salvando...'
+    const ok = await aoConfirmar({ data, qtde_pesada: qtde, peso_medio: medio, peso_total: total })
+    if (!ok) { btn.disabled = false; btn.textContent = '✓ Confirmar e salvar' }
+  }
+}
+
 // ----- Trato -----
+// o trato agora conversa com o Estoque: ao lançar um novo trato, dá baixa
+// automática no material correspondente (fazenda_estoque_movimento, tipo
+// SAIDA, vinculado por trato_id/lote_id) — assim "o que sai pro gado come"
+// já reflete no saldo do estoque sem precisar lançar duas vezes.
 async function subTrato (alvo, loteId) {
-  const { data } = await db.from('fazenda_trato').select('*').eq('lote_id', loteId).order('data', { ascending: false })
+  const [{ data }, { data: movsVinculados }] = await Promise.all([
+    db.from('fazenda_trato').select('*').eq('lote_id', loteId).order('data', { ascending: false }),
+    db.from('fazenda_estoque_movimento').select('trato_id').eq('lote_id', loteId).not('trato_id', 'is', null)
+  ])
   const lista = data || []
+  const baixados = new Set((movsVinculados || []).map(m => m.trato_id))
   const total = lista.reduce((s, t) => s + Number(t.valor_total || 0), 0)
   alvo.innerHTML = blocoListaSimples(`Trato — total R$ ${fmtNum(total)}`,
     PERFIL.editavel ? `<button class="btn-secundario mini" id="tr-novo">+ novo</button>` : '',
-    `<table><thead><tr><th>Data</th><th>Insumo</th><th class="num">Qtde</th><th class="num">Unit.</th><th class="num">Total</th>${PERFIL.editavel ? '<th></th>' : ''}</tr></thead><tbody>
+    `<table><thead><tr><th>Data</th><th>Insumo</th><th class="num">Qtde</th><th class="num">Unit.</th><th class="num">Total</th><th>Estoque</th>${PERFIL.editavel ? '<th></th>' : ''}</tr></thead><tbody>
       ${lista.map(t => `<tr><td class="texto-dim2">${fmtData(t.data)}</td><td>${esc(t.insumo)}</td>
         <td class="num">${fmtNum(t.quantidade)} ${esc(t.unidade ?? '')}</td><td class="num">R$ ${fmtNum(t.valor_unitario)}</td><td class="num">R$ ${fmtNum(t.valor_total)}</td>
+        <td>${baixados.has(t.id) ? '<span class="badge-bom">baixado</span>' : '<span class="texto-dim2">—</span>'}</td>
         ${PERFIL.editavel ? `<td><button class="btn-secundario mini" data-editar="${t.id}">editar</button></td>` : ''}</tr>`).join('')
-        || `<tr><td colspan="${PERFIL.editavel ? 6 : 5}" class="vazio">Nenhum trato lançado ainda.</td></tr>`}
+        || `<tr><td colspan="${PERFIL.editavel ? 7 : 6}" class="vazio">Nenhum trato lançado ainda.</td></tr>`}
     </tbody></table>`)
   if (PERFIL.editavel) {
     $('#tr-novo').onclick = () => formTrato(loteId, null, () => subTrato(alvo, loteId))
@@ -1888,20 +2170,114 @@ async function subTrato (alvo, loteId) {
     })
   }
 }
-function formTrato (loteId, registro, aoSalvar) {
-  abrirFormRapido({
-    titulo: registro ? 'Editar trato' : 'Novo trato',
-    campos: [
-      ['data', 'Data', 'date', hojeISO()], ['insumo', 'Insumo', 'text', ''], ['tipo_insumo', 'Tipo', 'text', ''],
-      ['quantidade', 'Quantidade', 'decimal', ''], ['unidade', 'Unidade', 'text', 'kg'],
-      ['valor_unitario', 'Valor unitário (R$)', 'decimal', ''], ['observacoes', 'Observações', 'textarea', '']
-    ],
-    obrigatorios: ['data', 'insumo', 'quantidade'], registro,
-    salvar: async corpo => registro
-      ? db.from('fazenda_trato').update(corpo).eq('id', registro.id)
-      : db.from('fazenda_trato').insert({ ...corpo, lote_id: loteId, criado_por: PERFIL.pessoaId }),
-    excluir: async id => db.from('fazenda_trato').delete().eq('id', id)
-  }, aoSalvar)
+async function formTrato (loteId, registro, aoSalvar) {
+  // materiais já cadastrados no estoque, pra sugerir no autocomplete e
+  // mostrar quanto tem disponível antes de lançar o trato
+  const { data: movs } = await db.from('fazenda_estoque_movimento').select('material,unidade_medida,saldo_apos').order('criado_em', { ascending: false }).limit(500)
+  const porMaterial = {}
+  ;(movs || []).forEach(m => { if (!porMaterial[m.material]) porMaterial[m.material] = m })
+  const materiais = Object.values(porMaterial).sort((a, b) => a.material.localeCompare(b.material))
+
+  const fundo = document.createElement('div')
+  fundo.className = 'modal-fundo'
+  fundo.innerHTML = `<div class="modal">
+    <h3>${registro ? 'Editar trato' : 'Novo trato'}</h3>
+    <div class="form-grade">
+      <div class="campo"><label>Data *</label><input type="date" id="tr-data" value="${esc(registro?.data ?? hojeISO())}"></div>
+      <div class="campo"><label>Insumo *</label>
+        <input id="tr-insumo" list="tr-insumo-lista" placeholder="ex: Ração, Silagem" value="${esc(registro?.insumo ?? '')}">
+        <datalist id="tr-insumo-lista">${materiais.map(m => `<option value="${esc(m.material)}">`).join('')}</datalist>
+      </div>
+      <div class="campo"><label>Tipo</label><input id="tr-tipo-insumo" value="${esc(registro?.tipo_insumo ?? '')}"></div>
+      <div class="campo"><label>Quantidade *</label><input id="tr-qtd" inputmode="decimal" value="${registro ? fmtNum(registro.quantidade) : ''}"></div>
+      <div class="campo"><label>Unidade</label><input id="tr-unidade" value="${esc(registro?.unidade ?? 'kg')}"></div>
+      <div class="campo"><label>Valor unitário (R$)</label><input id="tr-vunit" inputmode="decimal" value="${registro ? fmtNum(registro.valor_unitario) : ''}"></div>
+      <div class="campo"><label>Valor total (R$)</label><input id="tr-vtotal" inputmode="decimal" value="${registro ? fmtNum(registro.valor_total) : ''}"></div>
+    </div>
+    <p class="texto-dim2" id="tr-saldo-info" style="font-size:12px;margin-top:6px;"></p>
+    <div class="campo" style="margin-top:10px;"><label>Observações</label><textarea id="tr-obs" style="min-height:60px;">${esc(registro?.observacoes ?? '')}</textarea></div>
+    ${!registro ? `<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:12px;color:var(--dim);">
+      <input type="checkbox" id="tr-baixar-estoque" checked style="width:auto;"> Dar baixa automática no estoque desse insumo
+    </label>` : ''}
+    <div class="acoes" style="margin-top:14px;"><button class="btn" id="tr-salvar">${registro ? 'Salvar' : 'Registrar'}</button>
+      ${registro ? `<button class="btn-secundario" id="tr-excluir" style="color:var(--warn-text);">Excluir</button>` : ''}
+      <button class="btn-secundario" id="tr-fechar">Fechar</button></div>
+    <div class="recado oculto" id="tr-recado"></div>
+  </div>`
+  document.body.appendChild(fundo)
+  const fechar = () => fundo.remove()
+  fundo.querySelector('#tr-fechar').onclick = fechar
+  fundo.onclick = e => { if (e.target === fundo) fechar() }
+  const el = fundo.querySelector('#tr-recado')
+  const aviso = t => { el.textContent = t; el.classList.remove('oculto'); el.style.borderColor = 'var(--warn-text)'; el.style.color = 'var(--warn-text)' }
+
+  const atualizarSaldoInfo = () => {
+    const nome = fundo.querySelector('#tr-insumo').value.trim()
+    const m = materiais.find(x => x.material.toLowerCase() === nome.toLowerCase())
+    const info = fundo.querySelector('#tr-saldo-info')
+    if (!nome) { info.textContent = ''; return }
+    info.textContent = m ? `Tem ${fmtNum(m.saldo_apos)} ${m.unidade_medida} disponível no estoque.` : 'Esse insumo ainda não tem saldo no estoque.'
+    if (m && !registro) fundo.querySelector('#tr-unidade').value = m.unidade_medida
+  }
+  fundo.querySelector('#tr-insumo').addEventListener('input', atualizarSaldoInfo)
+  atualizarSaldoInfo()
+
+  if (registro) {
+    fundo.querySelector('#tr-excluir').onclick = async () => {
+      if (!confirm('Excluir esse trato? Não dá pra desfazer (se ele já baixou o estoque, o saldo não volta sozinho).')) return
+      const btn = fundo.querySelector('#tr-excluir'); btn.disabled = true; btn.textContent = 'Excluindo...'
+      const { error } = await db.from('fazenda_trato').delete().eq('id', registro.id)
+      if (error) { btn.disabled = false; btn.textContent = 'Excluir'; aviso(error.message); return }
+      fechar(); aoSalvar()
+    }
+  }
+
+  fundo.querySelector('#tr-salvar').onclick = async () => {
+    const insumo = fundo.querySelector('#tr-insumo').value.trim()
+    const quantidade = numeroBR(fundo.querySelector('#tr-qtd').value)
+    if (!insumo) { aviso('Informe o insumo.'); return }
+    if (quantidade === null || quantidade <= 0) { aviso('Informe a quantidade.'); return }
+    const corpo = {
+      data: fundo.querySelector('#tr-data').value,
+      insumo,
+      tipo_insumo: fundo.querySelector('#tr-tipo-insumo').value.trim() || null,
+      quantidade,
+      unidade: fundo.querySelector('#tr-unidade').value.trim() || 'kg',
+      valor_unitario: numeroBR(fundo.querySelector('#tr-vunit').value),
+      valor_total: numeroBR(fundo.querySelector('#tr-vtotal').value),
+      observacoes: fundo.querySelector('#tr-obs').value.trim() || null
+    }
+    const btn = fundo.querySelector('#tr-salvar'); btn.disabled = true; btn.textContent = 'Salvando...'
+
+    if (registro) {
+      const { error } = await db.from('fazenda_trato').update(corpo).eq('id', registro.id)
+      btn.disabled = false; btn.textContent = 'Salvar'
+      if (error) { aviso(error.message); return }
+      fechar(); aoSalvar()
+      return
+    }
+
+    const { data: novoTrato, error } = await db.from('fazenda_trato')
+      .insert({ ...corpo, lote_id: loteId, criado_por: PERFIL.pessoaId }).select('id').single()
+    if (error) { btn.disabled = false; btn.textContent = 'Registrar'; aviso(error.message); return }
+
+    const baixarEstoque = fundo.querySelector('#tr-baixar-estoque')?.checked
+    if (!baixarEstoque) { btn.disabled = false; btn.textContent = 'Registrar'; fechar(); aoSalvar(); return }
+
+    const { data: ultimo } = await db.from('fazenda_estoque_movimento').select('saldo_apos')
+      .eq('material', insumo).order('criado_em', { ascending: false }).limit(1).maybeSingle()
+    const saldoAnterior = Number(ultimo?.saldo_apos ?? 0)
+    const saldoApos = saldoAnterior - quantidade
+    const { error: erroMov } = await db.from('fazenda_estoque_movimento').insert({
+      data: corpo.data, material: insumo, unidade_medida: corpo.unidade, tipo_mov: 'SAIDA',
+      quantidade, saldo_apos: saldoApos, observacoes: 'Baixa automática por trato',
+      trato_id: novoTrato.id, lote_id: loteId, criado_por: PERFIL.pessoaId
+    })
+    btn.disabled = false; btn.textContent = 'Registrar'
+    if (erroMov) { aviso(`Trato salvo! Mas não deu pra dar baixa no estoque: ${erroMov.message}. Lança manualmente pela aba Estoque.`); aoSalvar(); return }
+    if (saldoApos < 0) { aviso(`Trato salvo e baixado do estoque — mas atenção, o saldo de "${insumo}" ficou negativo (${fmtNum(saldoApos)} ${corpo.unidade}). Confere se faltou lançar uma entrada.`); aoSalvar(); return }
+    fechar(); aoSalvar()
+  }
 }
 
 // ----- Sanidade -----
@@ -4893,7 +5269,7 @@ function montarWidgetAssistente () {
   bolha.id = 'assist-bolha'
   bolha.type = 'button'
   bolha.className = 'widget-bolha'
-  bolha.innerHTML = '<span style="font-size:16px;">✨</span> Assistente'
+  bolha.innerHTML = '<span style="font-size:16px;">✨</span> <span>Assistente</span>'
   bolha.style.cssText = `
     position:fixed; right:22px; bottom:22px; z-index:9000;
     background:linear-gradient(135deg,var(--gold),rgba(var(--gold-rgb),.65));
@@ -4915,7 +5291,7 @@ function montarWidgetAssistente () {
       <div style="display:flex;align-items:center;gap:10px;">
         <div style="width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.35);display:flex;align-items:center;justify-content:center;font-size:17px;">✨</div>
         <div><b style="font-size:14.5px;font-family:var(--serif);">Assistente do Sistema</b>
-          <div style="font-size:11px;opacity:.8;">tira dúvida de como usar o sistema da Fazenda</div></div>
+          <div id="as-foco" style="font-size:11px;opacity:.8;">tira dúvida de como usar o sistema da Fazenda</div></div>
       </div>
       <button id="assist-fechar" class="widget-fechar" style="background:rgba(255,255,255,.2);border:none;width:28px;height:28px;border-radius:50%;font-size:17px;cursor:pointer;color:#3a2e08;line-height:1;flex:none;">−</button>
     </div>
@@ -4985,7 +5361,16 @@ function montarWidgetAssistente () {
   const posicionarPainelPertoDaBolha = () => {
     const r = bolha.getBoundingClientRect()
     const painelAltura = Math.min(540, window.innerHeight - 120)
-    const cabePraBaixo = r.bottom + 8 + painelAltura <= window.innerHeight
+    // em telas estreitas (mesmo ponto de corte do @media(max-width:820px) do
+    // CSS) o painel vira um "bottom sheet" fixo por CSS (!important em
+    // left/right/bottom). Se aqui a gente também definisse um "top" inline
+    // pro caso de caber pra baixo, o elemento ficaria com top + height +
+    // bottom todos preenchidos ao mesmo tempo — um "over-constrained box" que
+    // o navegador resolve ignorando o bottom do CSS e posicionando pelo
+    // top, bagunçando o layout combinado com a bolha em posições diferentes.
+    // Por isso em modo compacto a gente nunca usa o ramo "cabePraBaixo".
+    const modoCompacto = window.innerWidth <= 820
+    const cabePraBaixo = !modoCompacto && r.bottom + 8 + painelAltura <= window.innerHeight
     const cabeAEsquerda = r.right >= 370 + 8
     painel.style.left = painel.style.right = painel.style.top = painel.style.bottom = ''
     if (cabeAEsquerda) painel.style.right = Math.max(8, window.innerWidth - r.right) + 'px'
@@ -4994,14 +5379,41 @@ function montarWidgetAssistente () {
     else painel.style.bottom = Math.max(8, window.innerHeight - r.top + 8) + 'px'
   }
 
+  // o foco do assistente muda de acordo com onde a pessoa está navegando:
+  // dentro da aba Sanidade de um lote ele também vira apoio veterinário,
+  // e no resto da ficha do lote vira apoio de especialista em confinamento
+  // (a function do lado do servidor decide o que isso muda na resposta —
+  // aqui é só o rótulo/saudação que aparecem pra pessoa perceber a troca)
+  const focoAtual = () => {
+    if (CONTEXTO_ASSISTENTE.pagina === 'lote_detalhe' && CONTEXTO_ASSISTENTE.subaba === 'sanidade') {
+      return {
+        rotulo: '🩺 Modo veterinário' + (CONTEXTO_ASSISTENTE.loteNome ? ` — lote "${CONTEXTO_ASSISTENTE.loteNome}"` : ''),
+        saudacao: 'Oi! Aqui na Sanidade eu também posso ajudar com dúvidas de veterinária do confinamento — vacina, verminose, dosagem, sintoma de doença. E, claro, também te ajudo a navegar no sistema. O que você precisa?'
+      }
+    }
+    if (CONTEXTO_ASSISTENTE.pagina === 'lote_detalhe') {
+      return {
+        rotulo: '🐂 Especialista em confinamento' + (CONTEXTO_ASSISTENTE.loteNome ? ` — lote "${CONTEXTO_ASSISTENTE.loteNome}"` : ''),
+        saudacao: 'Oi! Além de te ajudar a navegar no sistema, aqui na ficha do lote eu também posso ajudar com dúvidas de manejo de confinamento — dieta, ganho de peso, dias de cocho. O que você precisa?'
+      }
+    }
+    return {
+      rotulo: 'tira dúvida de como usar o sistema da Fazenda',
+      saudacao: 'Oi! Posso te ajudar a achar qualquer coisa no sistema da Fazenda ou explicar como fazer uma tarefa. O que você precisa?'
+    }
+  }
+
   const abrirFechar = () => {
     ASSIST_ABERTO = !ASSIST_ABERTO
     if (ASSIST_ABERTO) {
+      const foco = focoAtual()
+      const focoEl = $('#as-foco')
+      if (focoEl) focoEl.textContent = foco.rotulo
       posicionarPainelPertoDaBolha()
       painel.style.display = 'flex'
       requestAnimationFrame(() => { painel.style.opacity = '1'; painel.style.transform = 'translateY(0) scale(1)' })
       if (!chat().childElementCount) {
-        renderMensagem('assistant', 'Oi! Posso te ajudar a achar qualquer coisa no sistema da Fazenda ou explicar como fazer uma tarefa. O que você precisa?')
+        renderMensagem('assistant', foco.saudacao)
         ASSIST_HISTORICO.forEach(m => renderMensagem(m.role === 'user' ? 'user' : 'assistant', m.content))
       }
     } else {
@@ -5013,6 +5425,16 @@ function montarWidgetAssistente () {
   // ---- arrastar a bolha pra qualquer canto da tela — ela não pode ficar
   // grudada só num lugar, atrapalhando botão que esteja embaixo dela ----
   const aplicarPosicaoBolha = pos => {
+    // no celular/tablet (mesmo ponto de corte do @media(max-width:820px)) o
+    // CSS já fixa a bolha num canto com !important (por causa da área segura
+    // de notch/home indicator). Se aqui a gente também deixasse um "left"/
+    // "top" arrastado ativo, ele ficaria brigando com o right/bottom
+    // forçados pelo CSS — e como a bolha não tem largura/altura fixa (ela é
+    // do tamanho do próprio conteúdo), o navegador "estica" o botão pra
+    // preencher todo o espaço entre essas bordas, virando uma caixa gigante
+    // e deformada em vez do balãozinho redondo. Por isso em telas estreitas
+    // a posição arrastada é ignorada e a bolha sempre volta pro canto.
+    if (window.innerWidth <= 820) pos = null
     bolha.style.left = pos ? pos.left + 'px' : ''
     bolha.style.top = pos ? pos.top + 'px' : ''
     bolha.style.right = pos ? '' : '22px'
@@ -5100,7 +5522,7 @@ function montarWidgetAssistente () {
     const carregando = renderDigitando()
 
     ASSIST_HISTORICO.push({ role: 'user', content: texto })
-    const { data, error } = await db.functions.invoke('fazenda-assistente-sistema', { body: { mensagens: ASSIST_HISTORICO } })
+    const { data, error } = await db.functions.invoke('fazenda-assistente-sistema', { body: { mensagens: ASSIST_HISTORICO, contexto: CONTEXTO_ASSISTENTE } })
     btn.disabled = false
     carregando.remove()
 
