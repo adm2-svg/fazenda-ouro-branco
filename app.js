@@ -1081,6 +1081,339 @@ function renderPesoRebanho (alvo, linhas) {
 const filtroPesInd = { busca: '', faixa: '', lote: '' }
 const selecaoPesInd = new Set()
 
+// ==================================================================
+// Pesagem por foto (IA) — foto do brinco + foto do visor da balança,
+// a IA lê e devolve pra conferir antes de gravar. Dois jeitos de usar,
+// a pessoa escolhe na hora: "confirmar uma por uma" (pesa e já confirma,
+// sem parar o curral) ou "tirar todas e revisar depois" (fila fica salva
+// no aparelho — mesmo se fechar o app — pra revisar com calma depois).
+// Nunca grava sozinha: sempre mostra os campos editáveis antes de salvar.
+// ==================================================================
+
+// comprime a foto antes de guardar/enviar — celular tira foto de vários
+// MB, e só precisa do bastante pra ler brinco/visor; assim a fila cabe
+// mais pares no IndexedDB e o envio pra IA fica bem mais rápido
+function comprimirFoto (arquivo, maxLado = 1280, qualidade = 0.82) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(arquivo)
+    img.onload = () => {
+      const escala = Math.min(1, maxLado / Math.max(img.width, img.height))
+      const w = Math.max(1, Math.round(img.width * escala))
+      const h = Math.max(1, Math.round(img.height * escala))
+      const canvas = document.createElement('canvas')
+      canvas.width = w; canvas.height = h
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+      canvas.toBlob(blob => {
+        URL.revokeObjectURL(url)
+        blob ? resolve(blob) : reject(new Error('Não deu pra processar a foto.'))
+      }, 'image/jpeg', qualidade)
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Não deu pra abrir essa foto.')) }
+    img.src = url
+  })
+}
+function blobParaBase64 (blob) {
+  return new Promise((resolve, reject) => {
+    const leitor = new FileReader()
+    leitor.onload = () => resolve(String(leitor.result).split(',')[1] || '')
+    leitor.onerror = () => reject(leitor.error)
+    leitor.readAsDataURL(blob)
+  })
+}
+
+// fila local (IndexedDB) do modo "revisar depois" — sobrevive a fechar o
+// app no meio do curral, some só quando a pessoa confirma ou descarta
+const FILA_FOTOS_DB = 'fazenda-fila-pesagem-fotos'
+function filaFotosAbrirDB () {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(FILA_FOTOS_DB, 1)
+    req.onupgradeneeded = () => { req.result.createObjectStore('fila', { keyPath: 'id' }) }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+async function filaFotosAdicionar (item) {
+  const bd = await filaFotosAbrirDB()
+  return new Promise((resolve, reject) => {
+    const tx = bd.transaction('fila', 'readwrite')
+    tx.objectStore('fila').put(item)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+}
+async function filaFotosListar () {
+  const bd = await filaFotosAbrirDB()
+  return new Promise((resolve, reject) => {
+    const req = bd.transaction('fila', 'readonly').objectStore('fila').getAll()
+    req.onsuccess = () => resolve((req.result || []).sort((a, b) => a.criadoEm - b.criadoEm))
+    req.onerror = () => reject(req.error)
+  })
+}
+async function filaFotosRemover (id) {
+  const bd = await filaFotosAbrirDB()
+  return new Promise((resolve, reject) => {
+    const tx = bd.transaction('fila', 'readwrite')
+    tx.objectStore('fila').delete(id)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
+function badgeConfiancaFoto (c) {
+  if (!c) return ''
+  const cor = c === 'alta' ? 'var(--good-text)' : 'var(--warn-text)'
+  const rotulo = c === 'alta' ? 'confiança alta' : c === 'media' ? 'confiança média — confira' : 'confiança baixa — confira!'
+  return `<span style="font-size:10.5px;color:${cor};font-weight:700;margin-left:6px;">${rotulo}</span>`
+}
+
+// renderiza o card de resultado (campos editáveis + confirmar) dentro do
+// elemento indicado — usado tanto no modo "agora" quanto na revisão da fila
+function renderResultadoFotoEm (alvoEl, extraido, lotesOpcoes, aoConfirmar) {
+  const temBrinco = !!extraido.brinco
+  alvoEl.innerHTML = `
+    <div class="panel" style="padding:14px 16px;margin-top:12px;">
+      ${extraido.observacao ? `<p class="texto-dim2" style="font-size:12px;margin:0 0 10px;">⚠️ ${esc(extraido.observacao)}</p>` : ''}
+      <div class="form-grade">
+        <div class="campo"><label>Tipo de identificação</label><select id="pf-tipo">
+          <option value="Brinco" ${temBrinco ? 'selected' : ''}>Brinco</option>
+          <option value="S/N" ${!temBrinco ? 'selected' : ''}>S/N (sem identificação)</option>
+        </select></div>
+        <div class="campo" id="pf-campo-brinco"><label>Nº do brinco${badgeConfiancaFoto(extraido.confianca_brinco)}</label>
+          <input id="pf-brinco" value="${esc(extraido.brinco || '')}"></div>
+        <div class="campo" id="pf-campo-sn" style="display:none;"><label>Identificação S/N</label><input id="pf-sn" placeholder="ex: SN_0042"></div>
+        <div class="campo"><label>Peso (kg)${badgeConfiancaFoto(extraido.confianca_peso)}</label>
+          <input id="pf-peso" inputmode="decimal" value="${extraido.peso_kg != null ? fmtNum(extraido.peso_kg, 1) : ''}"></div>
+        <div class="campo"><label>Lote/pasto</label><select id="pf-lote"><option value="">— sem lote —</option>
+          ${lotesOpcoes.map(l => `<option value="${l.id}">${esc(l.nome)}</option>`).join('')}</select></div>
+      </div>
+      <div class="acoes" style="margin-top:12px;"><button class="btn" id="pf-confirmar">✓ Confirmar e salvar</button></div>
+      <div class="recado oculto" id="pf-erro-confirma"></div>
+    </div>`
+  const alternarTipo = () => {
+    const ehBrinco = alvoEl.querySelector('#pf-tipo').value === 'Brinco'
+    alvoEl.querySelector('#pf-campo-brinco').style.display = ehBrinco ? '' : 'none'
+    alvoEl.querySelector('#pf-campo-sn').style.display = ehBrinco ? 'none' : ''
+  }
+  alvoEl.querySelector('#pf-tipo').onchange = alternarTipo
+  alternarTipo()
+  alvoEl.querySelector('#pf-confirmar').onclick = async () => {
+    const tipo = alvoEl.querySelector('#pf-tipo').value
+    const brinco = alvoEl.querySelector('#pf-brinco').value.trim()
+    const sn = alvoEl.querySelector('#pf-sn').value.trim()
+    const peso = numeroBR(alvoEl.querySelector('#pf-peso').value)
+    const avisoEl = alvoEl.querySelector('#pf-erro-confirma')
+    const aviso = t => { avisoEl.textContent = t; avisoEl.classList.remove('oculto') }
+    if (tipo === 'Brinco' && !brinco) { aviso('Informe o número do brinco (ou troque pra S/N).'); return }
+    if (tipo === 'S/N' && !sn) { aviso('Informe a identificação S/N.'); return }
+    if (peso === null || peso <= 0) { aviso('Informe o peso.'); return }
+    const btn = alvoEl.querySelector('#pf-confirmar'); btn.disabled = true; btn.textContent = 'Salvando...'
+    const ok = await aoConfirmar({
+      tipo_identificacao: tipo, id_brinco: tipo === 'Brinco' ? brinco : null, id_sn: tipo === 'S/N' ? sn : null,
+      peso_kg: peso, data: hojeISO(), lote_id: alvoEl.querySelector('#pf-lote').value || null
+    })
+    if (!ok) { btn.disabled = false; btn.textContent = '✓ Confirmar e salvar' }
+  }
+}
+
+function abrirPesagemFoto (lotes, aoRegistrarUma) {
+  const fundo = document.createElement('div')
+  fundo.className = 'modal-fundo'
+  fundo.innerHTML = `<div class="modal" style="max-width:520px;">
+    <h3>📷 Pesagem por foto (IA)</h3>
+    <div class="subabas" style="margin-bottom:14px;">
+      <button type="button" data-modo="agora">Confirmar uma por uma</button>
+      <button type="button" data-modo="fila">Tirar todas e revisar depois</button>
+    </div>
+    <div id="pf-corpo"></div>
+    <div class="acoes" style="margin-top:14px;"><button class="btn-secundario" id="pf-fechar">Fechar</button></div>
+  </div>`
+  document.body.appendChild(fundo)
+
+  let fotoBrinco = null // { blob, previewUrl }
+  let fotoPeso = null
+  const limparFotosAtual = () => {
+    if (fotoBrinco) URL.revokeObjectURL(fotoBrinco.previewUrl)
+    if (fotoPeso) URL.revokeObjectURL(fotoPeso.previewUrl)
+    fotoBrinco = null; fotoPeso = null
+  }
+  const fechar = () => { limparFotosAtual(); fundo.remove() }
+  fundo.querySelector('#pf-fechar').onclick = fechar
+  fundo.onclick = e => { if (e.target === fundo) fechar() }
+
+  const corpo = fundo.querySelector('#pf-corpo')
+  const botoesModo = fundo.querySelectorAll('[data-modo]')
+  let modo = localStorage.getItem('fazenda-modo-pesagem-foto') === 'fila' ? 'fila' : 'agora'
+  const marcarModoAtivo = () => botoesModo.forEach(b => b.classList.toggle('ativo', b.dataset.modo === modo))
+  botoesModo.forEach(b => {
+    b.onclick = () => {
+      if (modo === b.dataset.modo) return
+      limparFotosAtual()
+      modo = b.dataset.modo
+      localStorage.setItem('fazenda-modo-pesagem-foto', modo)
+      marcarModoAtivo()
+      renderizarModo()
+    }
+  })
+
+  const capturarFoto = async arquivo => ({ blob: await comprimirFoto(arquivo), previewUrl: '' })
+  const templateCapturas = () => `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+      <div>
+        <label class="texto-dim2" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:5px;">Foto do brinco</label>
+        <div id="pf-preview-brinco" style="aspect-ratio:1;border:1px dashed var(--line2);border-radius:9px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--surface2);cursor:pointer;">
+          ${fotoBrinco ? `<img src="${fotoBrinco.previewUrl}" style="width:100%;height:100%;object-fit:cover;">` : `<span style="font-size:24px;">🏷️</span>`}
+        </div>
+        <input type="file" accept="image/*" capture="environment" id="pf-input-brinco" class="oculto">
+      </div>
+      <div>
+        <label class="texto-dim2" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:5px;">Foto da balança</label>
+        <div id="pf-preview-peso" style="aspect-ratio:1;border:1px dashed var(--line2);border-radius:9px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--surface2);cursor:pointer;">
+          ${fotoPeso ? `<img src="${fotoPeso.previewUrl}" style="width:100%;height:100%;object-fit:cover;">` : `<span style="font-size:24px;">⚖️</span>`}
+        </div>
+        <input type="file" accept="image/*" capture="environment" id="pf-input-peso" class="oculto">
+      </div>
+    </div>`
+  const ligarCapturas = aoMudar => {
+    corpo.querySelector('#pf-preview-brinco').onclick = () => corpo.querySelector('#pf-input-brinco').click()
+    corpo.querySelector('#pf-preview-peso').onclick = () => corpo.querySelector('#pf-input-peso').click()
+    corpo.querySelector('#pf-input-brinco').onchange = async e => {
+      const arquivo = e.target.files[0]; if (!arquivo) return
+      if (fotoBrinco) URL.revokeObjectURL(fotoBrinco.previewUrl)
+      fotoBrinco = await capturarFoto(arquivo)
+      fotoBrinco.previewUrl = URL.createObjectURL(fotoBrinco.blob)
+      aoMudar()
+    }
+    corpo.querySelector('#pf-input-peso').onchange = async e => {
+      const arquivo = e.target.files[0]; if (!arquivo) return
+      if (fotoPeso) URL.revokeObjectURL(fotoPeso.previewUrl)
+      fotoPeso = await capturarFoto(arquivo)
+      fotoPeso.previewUrl = URL.createObjectURL(fotoPeso.blob)
+      aoMudar()
+    }
+  }
+
+  // ---- modo "confirmar uma por uma" ----
+  let sessaoSalvos = []
+  const renderAgora = () => {
+    corpo.innerHTML = `
+      <p class="texto-dim2" style="font-size:12px;margin:0 0 10px;">Tira as duas fotos, a IA lê e você confirma antes de gravar — pesa animal por animal sem parar a fila do curral.</p>
+      ${templateCapturas()}
+      <button class="btn" id="pf-analisar" style="width:100%;" ${(!fotoBrinco && !fotoPeso) ? 'disabled' : ''}>Analisar com IA</button>
+      <div id="pf-resultado"></div>
+      ${sessaoSalvos.length ? `<div class="recado" style="margin-top:12px;"><b>${sessaoSalvos.length} pesagem(ns) registrada(s) agora:</b><br>${sessaoSalvos.slice(-5).reverse().map(s => `${esc(s.brinco || 'S/N')} — ${fmtNum(s.peso_kg, 1)} kg`).join('<br>')}</div>` : ''}`
+    ligarCapturas(renderAgora)
+    corpo.querySelector('#pf-analisar').onclick = analisarAgora
+  }
+  const analisarAgora = async () => {
+    const btn = corpo.querySelector('#pf-analisar')
+    btn.disabled = true; btn.textContent = 'Analisando...'
+    const resultadoEl = corpo.querySelector('#pf-resultado')
+    resultadoEl.innerHTML = ''
+    try {
+      const body = {}
+      if (fotoBrinco) body.foto_brinco = { data: await blobParaBase64(fotoBrinco.blob), media_type: 'image/jpeg' }
+      if (fotoPeso) body.foto_peso = { data: await blobParaBase64(fotoPeso.blob), media_type: 'image/jpeg' }
+      const { data, error } = await db.functions.invoke('fazenda-pesagem-foto', { body })
+      if (error || data?.erro) {
+        let detalhe = data?.erro || error?.message || 'Erro ao analisar.'
+        if (error?.context?.json) { try { const c = await error.context.json(); detalhe = c?.erro || detalhe } catch {} }
+        resultadoEl.innerHTML = `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);margin-top:10px;">${esc(detalhe)}</div>`
+        return
+      }
+      renderResultadoFotoEm(resultadoEl, data.extraido, lotes, async corpoSalvar => {
+        const { error: erroSalvar } = await db.from('fazenda_pesagem_individual').insert({ ...corpoSalvar, criado_por: PERFIL.pessoaId })
+        if (erroSalvar) { alert('Não deu pra salvar: ' + erroSalvar.message); return false }
+        sessaoSalvos.push({ brinco: corpoSalvar.id_brinco, peso_kg: corpoSalvar.peso_kg })
+        limparFotosAtual()
+        aoRegistrarUma()
+        renderAgora()
+        return true
+      })
+    } finally {
+      btn.disabled = false; btn.textContent = 'Analisar com IA'
+    }
+  }
+
+  // ---- modo "tirar todas e revisar depois" ----
+  const renderFila = async () => {
+    corpo.innerHTML = `<p class="texto-dim2" style="font-size:12px;">carregando fila...</p>`
+    const itens = await filaFotosListar()
+    corpo.innerHTML = `
+      <p class="texto-dim2" style="font-size:12px;margin:0 0 10px;">Tira as fotos de vários animais sem parar pra conferir — a fila fica salva no aparelho, mesmo se fechar o app. Depois, com calma (ou com wifi), revisa e confirma um por um.</p>
+      ${templateCapturas()}
+      <button class="btn-secundario" id="pf-adicionar-fila" style="width:100%;" ${(!fotoBrinco && !fotoPeso) ? 'disabled' : ''}>➕ Adicionar à fila</button>
+      <div class="panel" style="padding:12px 14px;margin-top:14px;">
+        <div class="cabeca-secao" style="margin-bottom:0;">
+          <b style="font-size:13px;">${itens.length} par(es) aguardando revisão</b>
+          ${itens.length ? `<button class="btn mini" id="pf-revisar-fila">Revisar fila</button>` : ''}
+        </div>
+      </div>
+      <div id="pf-revisao"></div>`
+    ligarCapturas(renderFila)
+    corpo.querySelector('#pf-adicionar-fila').onclick = async () => {
+      if (!fotoBrinco && !fotoPeso) return
+      await filaFotosAdicionar({
+        id: 'f' + Date.now() + Math.random().toString(36).slice(2, 7),
+        criadoEm: Date.now(),
+        fotoBrinco: fotoBrinco ? fotoBrinco.blob : null,
+        fotoPeso: fotoPeso ? fotoPeso.blob : null
+      })
+      limparFotosAtual()
+      renderFila()
+    }
+    if (itens.length) corpo.querySelector('#pf-revisar-fila').onclick = () => revisarProximoDaFila(itens)
+  }
+  const revisarProximoDaFila = async itens => {
+    if (!itens.length) { renderFila(); return }
+    const [item, ...restante] = itens
+    const revisaoEl = corpo.querySelector('#pf-revisao')
+    if (!revisaoEl) return
+    const fotosPreview = `<div style="display:flex;gap:10px;margin-bottom:10px;align-items:center;">
+      ${item.fotoBrinco ? `<img src="${URL.createObjectURL(item.fotoBrinco)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;">` : ''}
+      ${item.fotoPeso ? `<img src="${URL.createObjectURL(item.fotoPeso)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;">` : ''}
+      <span class="texto-dim2" style="font-size:11.5px;">${restante.length + 1} restante(s) na fila</span>
+    </div>`
+    revisaoEl.innerHTML = fotosPreview + `<p class="texto-dim2" style="font-size:12px;">analisando com IA...</p>`
+    try {
+      const body = {}
+      if (item.fotoBrinco) body.foto_brinco = { data: await blobParaBase64(item.fotoBrinco), media_type: 'image/jpeg' }
+      if (item.fotoPeso) body.foto_peso = { data: await blobParaBase64(item.fotoPeso), media_type: 'image/jpeg' }
+      const { data, error } = await db.functions.invoke('fazenda-pesagem-foto', { body })
+      if (error || data?.erro) {
+        let detalhe = data?.erro || error?.message || 'Erro ao analisar.'
+        if (error?.context?.json) { try { const c = await error.context.json(); detalhe = c?.erro || detalhe } catch {} }
+        revisaoEl.innerHTML = fotosPreview + `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">
+          ${esc(detalhe)}
+          <div class="acoes" style="margin-top:8px;">
+            <button class="btn-secundario mini" id="pf-pular">Pular por enquanto</button>
+            <button class="btn-secundario mini" id="pf-descartar-erro" style="color:var(--warn-text);">Descartar essa foto</button>
+          </div></div>`
+        revisaoEl.querySelector('#pf-pular').onclick = () => revisarProximoDaFila([...restante, item])
+        revisaoEl.querySelector('#pf-descartar-erro').onclick = async () => { await filaFotosRemover(item.id); revisarProximoDaFila(restante) }
+        return
+      }
+      revisaoEl.innerHTML = fotosPreview + `<div id="pf-resultado-fila"></div>
+        <button class="btn-secundario mini" id="pf-descartar" style="margin-top:8px;color:var(--warn-text);">Descartar essa foto (tirei errado / não é um animal)</button>`
+      renderResultadoFotoEm(revisaoEl.querySelector('#pf-resultado-fila'), data.extraido, lotes, async corpoSalvar => {
+        const { error: erroSalvar } = await db.from('fazenda_pesagem_individual').insert({ ...corpoSalvar, criado_por: PERFIL.pessoaId })
+        if (erroSalvar) { alert('Não deu pra salvar: ' + erroSalvar.message); return false }
+        await filaFotosRemover(item.id)
+        aoRegistrarUma()
+        revisarProximoDaFila(restante)
+        return true
+      })
+      revisaoEl.querySelector('#pf-descartar').onclick = async () => { await filaFotosRemover(item.id); revisarProximoDaFila(restante) }
+    } catch (e) {
+      revisaoEl.innerHTML = fotosPreview + `<div class="recado" style="border-color:var(--warn-text);color:var(--warn-text);">${esc(String(e))}</div>`
+    }
+  }
+
+  const renderizarModo = () => { modo === 'fila' ? renderFila() : renderAgora() }
+  marcarModoAtivo()
+  renderizarModo()
+}
+
 async function subPesagemIndividual (alvo) {
   const [{ data: pesagens }, { data: lotes }] = await Promise.all([
     db.from('fazenda_pesagem_individual').select('*, lote:lote_id(nome)').order('peso_kg', { ascending: false }),
@@ -1181,7 +1514,10 @@ function renderPesagemIndividual (alvo) {
       ${graficoLinha('Distribuição cumulativa de peso', pontosCumulativa)}
     </div>
 
-    ${PERFIL.editavel ? `<div class="acoes" style="margin-bottom:16px;"><button class="btn" id="pi-novo">+ Nova pesagem</button></div>` : ''}
+    ${PERFIL.editavel ? `<div class="acoes" style="margin-bottom:16px;">
+      <button class="btn" id="pi-novo">+ Nova pesagem</button>
+      <button class="btn-secundario" id="pi-foto">📷 Pesagem por foto (IA)</button>
+    </div>` : ''}
 
     ${PERFIL.editavel ? `<div class="panel" style="padding:14px 18px;margin-bottom:16px;">
       <div class="filtros">
@@ -1219,6 +1555,7 @@ function renderPesagemIndividual (alvo) {
 
   if (PERFIL.editavel) {
     $('#pi-novo').onclick = () => formPesagemIndividual(null, () => subPesagemIndividual(alvo))
+    $('#pi-foto').onclick = () => abrirPesagemFoto(lotes, () => subPesagemIndividual(alvo))
     alvo.querySelectorAll('[data-editar-pi]').forEach(b => {
       b.onclick = () => formPesagemIndividual(todos.find(x => x.id === b.dataset.editarPi), () => subPesagemIndividual(alvo))
     })
@@ -4380,8 +4717,8 @@ function montarWidgetAssistente () {
     position:fixed; right:22px; bottom:22px; z-index:9000;
     background:linear-gradient(135deg,var(--gold),rgba(var(--gold-rgb),.65));
     color:#3a2e08; border:none; border-radius:30px;
-    padding:13px 22px; font-weight:700; font-size:13.5px; cursor:pointer;
-    display:flex; align-items:center; gap:8px;
+    padding:13px 22px; font-weight:700; font-size:13.5px; cursor:grab;
+    display:flex; align-items:center; gap:8px; touch-action:none; user-select:none;
     box-shadow:0 8px 26px rgba(0,0,0,.35), 0 2px 8px rgba(0,0,0,.2);`
   document.body.appendChild(bolha)
 
@@ -4460,9 +4797,26 @@ function montarWidgetAssistente () {
     return bolhaMsg
   }
 
+  // reabre no lugar de sempre (canto inferior direito) OU onde a pessoa
+  // arrastou a bolha da última vez — cada dispositivo guarda a própria
+  // preferência, então o mesmo login no celular e no computador não
+  // atrapalha um ao outro
+  const posicionarPainelPertoDaBolha = () => {
+    const r = bolha.getBoundingClientRect()
+    const painelAltura = Math.min(540, window.innerHeight - 120)
+    const cabePraBaixo = r.bottom + 8 + painelAltura <= window.innerHeight
+    const cabeAEsquerda = r.right >= 370 + 8
+    painel.style.left = painel.style.right = painel.style.top = painel.style.bottom = ''
+    if (cabeAEsquerda) painel.style.right = Math.max(8, window.innerWidth - r.right) + 'px'
+    else painel.style.left = Math.max(8, r.left) + 'px'
+    if (cabePraBaixo) painel.style.top = (r.bottom + 8) + 'px'
+    else painel.style.bottom = Math.max(8, window.innerHeight - r.top + 8) + 'px'
+  }
+
   const abrirFechar = () => {
     ASSIST_ABERTO = !ASSIST_ABERTO
     if (ASSIST_ABERTO) {
+      posicionarPainelPertoDaBolha()
       painel.style.display = 'flex'
       requestAnimationFrame(() => { painel.style.opacity = '1'; painel.style.transform = 'translateY(0) scale(1)' })
       if (!chat().childElementCount) {
@@ -4474,8 +4828,62 @@ function montarWidgetAssistente () {
       setTimeout(() => { painel.style.display = 'none' }, 180)
     }
   }
-  bolha.onclick = abrirFechar
+
+  // ---- arrastar a bolha pra qualquer canto da tela — ela não pode ficar
+  // grudada só num lugar, atrapalhando botão que esteja embaixo dela ----
+  const aplicarPosicaoBolha = pos => {
+    bolha.style.left = pos ? pos.left + 'px' : ''
+    bolha.style.top = pos ? pos.top + 'px' : ''
+    bolha.style.right = pos ? '' : '22px'
+    bolha.style.bottom = pos ? '' : '22px'
+  }
+  let posSalva = null
+  try { posSalva = JSON.parse(localStorage.getItem('fazenda-assist-pos') || 'null') } catch { posSalva = null }
+  if (posSalva) aplicarPosicaoBolha(posSalva)
+
+  let arrastando = false, moveu = false, offX = 0, offY = 0
+  bolha.addEventListener('pointerdown', e => {
+    arrastando = true; moveu = false
+    const r = bolha.getBoundingClientRect()
+    offX = e.clientX - r.left; offY = e.clientY - r.top
+    bolha.style.cursor = 'grabbing'
+    bolha.setPointerCapture(e.pointerId)
+  })
+  bolha.addEventListener('pointermove', e => {
+    if (!arrastando) return
+    const w = bolha.offsetWidth, h = bolha.offsetHeight
+    const novoLeft = Math.max(4, Math.min(window.innerWidth - w - 4, e.clientX - offX))
+    const novoTop = Math.max(4, Math.min(window.innerHeight - h - 4, e.clientY - offY))
+    if (Math.abs(e.movementX) + Math.abs(e.movementY) > 0) moveu = true
+    aplicarPosicaoBolha({ left: novoLeft, top: novoTop })
+  })
+  const soltarArrasto = () => {
+    if (!arrastando) return
+    arrastando = false
+    bolha.style.cursor = 'grab'
+    if (moveu) {
+      const r = bolha.getBoundingClientRect()
+      localStorage.setItem('fazenda-assist-pos', JSON.stringify({ left: r.left, top: r.top }))
+      if (ASSIST_ABERTO) posicionarPainelPertoDaBolha()
+    }
+  }
+  bolha.addEventListener('pointerup', soltarArrasto)
+  bolha.addEventListener('pointercancel', soltarArrasto)
+  bolha.addEventListener('click', e => {
+    // se acabou de arrastar, esse clique é "sujeira" do gesto — não abre o painel
+    if (moveu) { moveu = false; e.preventDefault(); e.stopPropagation(); return }
+    abrirFechar()
+  })
   $('#assist-fechar').onclick = abrirFechar
+  window.addEventListener('resize', () => {
+    // mantém a bolha visível se a tela mudar de tamanho (ex.: girar o tablet)
+    const r = bolha.getBoundingClientRect()
+    if (!posSalva) return
+    const w = bolha.offsetWidth, h = bolha.offsetHeight
+    const left = Math.max(4, Math.min(window.innerWidth - w - 4, r.left))
+    const top = Math.max(4, Math.min(window.innerHeight - h - 4, r.top))
+    if (left !== r.left || top !== r.top) aplicarPosicaoBolha({ left, top })
+  })
 
   // ---- áudio: reconhecimento de voz do navegador, transcreve pro campo ----
   const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition
