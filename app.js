@@ -3865,10 +3865,14 @@ async function paginaEstoque () {
         <div style="font-family:var(--serif);font-size:19px;">${fmtNum(m.saldo_apos)} <span style="font-size:12px;color:var(--dim2);">${esc(m.unidade_medida)}</span></div>
         <div class="texto-dim2" style="font-size:11px;margin-top:4px;">Usado até hoje: ${fmtNum(usadoPorMaterial[m.material] || 0)} ${esc(m.unidade_medida)}</div>
         ${m.categoria ? `<div class="texto-dim2" style="font-size:11px;margin-top:3px;">${esc(m.categoria)}</div>` : ''}
+        ${PERFIL.editavel ? `<button class="btn-secundario mini" style="margin-top:8px;width:100%;" data-mov-rapida="${esc(m.material)}">↕ Registrar movimentação</button>` : ''}
       </div>`).join('') || '<p class="vazio">Nenhum material em estoque ainda.</p>'}
     </div>
 
-    <div class="cabeca-secao"><h3 style="font-size:16px;">Movimentações</h3></div>
+    <div class="cabeca-secao">
+      <h3 style="font-size:16px;">Movimentações</h3>
+      ${PERFIL.editavel ? `<button class="btn-secundario" id="es-nova-mov">+ Nova movimentação</button>` : ''}
+    </div>
     <div class="panel" style="padding:0;"><div class="tabela-scroll">
       <table><thead><tr><th>Data</th><th>Material</th><th>Tipo</th><th class="num">Qtde</th><th class="num">Saldo após</th><th>Fornecedor</th><th></th></tr></thead><tbody>
         ${lista.map(m => `<tr>
@@ -3882,7 +3886,16 @@ async function paginaEstoque () {
       </tbody></table>
     </div></div>`
 
-  if (PERFIL.editavel) $('#es-novo').onclick = () => formEstoque(() => paginaEstoque())
+  if (PERFIL.editavel) {
+    $('#es-novo').onclick = () => formEstoque(() => paginaEstoque())
+    $('#es-nova-mov').onclick = () => formEstoque(() => paginaEstoque())
+    area.querySelectorAll('[data-mov-rapida]').forEach(b => {
+      b.onclick = () => {
+        const m = porMaterial[b.dataset.movRapida]
+        formEstoque(() => paginaEstoque(), { material: m.material, categoria: m.categoria, unidade: m.unidade_medida, tipo: 'SAIDA' })
+      }
+    })
+  }
   area.querySelectorAll('[data-ver-mov]').forEach(b => {
     b.onclick = () => abrirDetalheMovimentoEstoque(lista.find(m => m.id === b.dataset.verMov))
   })
@@ -3924,17 +3937,18 @@ function abrirDetalheMovimentoEstoque (m) {
   fundo.onclick = e => { if (e.target === fundo) fechar() }
 }
 
-function formEstoque (aoSalvar) {
+function formEstoque (aoSalvar, preset) {
+  preset = preset || {}
   const fundo = document.createElement('div')
   fundo.className = 'modal-fundo'
   fundo.innerHTML = `<div class="modal">
-    <h3>Movimentar estoque</h3>
+    <h3>${preset.material ? `Movimentar — ${esc(preset.material)}` : 'Movimentar estoque'}</h3>
     <div class="form-grade">
       <div class="campo"><label>Data *</label><input type="date" id="ef-data" value="${hojeISO()}"></div>
-      <div class="campo"><label>Material *</label><input id="ef-material" placeholder="ex: Ração, Sal mineral"></div>
-      <div class="campo"><label>Categoria</label><input id="ef-categoria"></div>
-      <div class="campo"><label>Unidade</label><input id="ef-unidade" value="kg"></div>
-      <div class="campo"><label>Tipo</label><select id="ef-tipo"><option value="ENTRADA">Entrada</option><option value="SAIDA">Saída</option></select></div>
+      <div class="campo"><label>Material *</label><input id="ef-material" placeholder="ex: Ração, Sal mineral" value="${esc(preset.material ?? '')}"></div>
+      <div class="campo"><label>Categoria</label><input id="ef-categoria" value="${esc(preset.categoria ?? '')}"></div>
+      <div class="campo"><label>Unidade</label><input id="ef-unidade" value="${esc(preset.unidade || 'kg')}"></div>
+      <div class="campo"><label>Tipo</label><select id="ef-tipo"><option value="ENTRADA" ${preset.tipo === 'ENTRADA' ? 'selected' : ''}>Entrada</option><option value="SAIDA" ${preset.tipo === 'SAIDA' ? 'selected' : ''}>Saída</option></select></div>
       <div class="campo"><label>Quantidade *</label><input id="ef-qtd" inputmode="decimal"></div>
       <div class="campo"><label>Fornecedor</label><input id="ef-fornecedor"></div>
       <div class="campo"><label>Valor (R$)</label><input id="ef-valor" inputmode="decimal"></div>
@@ -3950,6 +3964,7 @@ function formEstoque (aoSalvar) {
   const fechar = () => fundo.remove()
   fundo.querySelector('#ef-fechar').onclick = fechar
   fundo.onclick = e => { if (e.target === fundo) fechar() }
+  if (preset.material) fundo.querySelector('#ef-qtd').focus() // já veio com material/unidade prontos, só falta a quantidade
 
   fundo.querySelector('#ef-salvar').onclick = async () => {
     const el = fundo.querySelector('#ef-recado')
