@@ -3849,6 +3849,13 @@ async function paginaEstoque () {
   lista.forEach(m => { if (!porMaterial[m.material]) porMaterial[m.material] = m })
   const itens = Object.values(porMaterial).sort((a, b) => a.material.localeCompare(b.material))
 
+  // total já usado (saída) de cada material, desde o começo — pra saber
+  // "gastei tanto disso" além de só ver o saldo que sobrou
+  const usadoPorMaterial = {}
+  lista.forEach(m => {
+    if (m.tipo_mov !== 'ENTRADA') usadoPorMaterial[m.material] = (usadoPorMaterial[m.material] || 0) + Number(m.quantidade)
+  })
+
   area.innerHTML = `
     ${PERFIL.editavel ? `<div class="acoes" style="margin-bottom:16px;"><button class="btn" id="es-novo">+ Movimentar estoque</button></div>` : ''}
     <div class="cabeca-secao"><h3 style="font-size:16px;">Saldo atual</h3></div>
@@ -3856,6 +3863,7 @@ async function paginaEstoque () {
       ${itens.map(m => `<div class="panel" style="padding:14px 16px;">
         <div style="font-weight:600;font-size:13px;margin-bottom:5px;">${esc(m.material)}</div>
         <div style="font-family:var(--serif);font-size:19px;">${fmtNum(m.saldo_apos)} <span style="font-size:12px;color:var(--dim2);">${esc(m.unidade_medida)}</span></div>
+        <div class="texto-dim2" style="font-size:11px;margin-top:4px;">Usado até hoje: ${fmtNum(usadoPorMaterial[m.material] || 0)} ${esc(m.unidade_medida)}</div>
         ${m.categoria ? `<div class="texto-dim2" style="font-size:11px;margin-top:3px;">${esc(m.categoria)}</div>` : ''}
       </div>`).join('') || '<p class="vazio">Nenhum material em estoque ainda.</p>'}
     </div>
