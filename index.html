@@ -97,6 +97,9 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--rust);}
 .nav a:hover{background:var(--hover-bg);color:var(--txt);}
 .nav a.ativo{background:var(--hover-bg);color:var(--txt);border-left:3px solid var(--rust);}
 .nav .rodape-nav{margin-top:24px;padding-top:14px;border-top:1px solid var(--line);}
+.nav .rodape-nav button{display:flex;align-items:center;justify-content:center;gap:7px;}
+.nav .rodape-nav button svg{width:15px;height:15px;flex:none;}
+.nav .cabeca-nav{display:flex;align-items:center;justify-content:space-between;gap:8px;}
 .conteudo{padding:24px 28px;max-width:1400px;transition:max-width .2s;}
 html[data-largura="amplo"] .conteudo{max-width:1800px;}
 html[data-largura="cheio"] .conteudo{max-width:none;}
@@ -120,12 +123,23 @@ html[data-largura="cheio"] body{zoom:1.12;}
 .btn-secundario:hover{border-color:var(--rust);color:var(--rust);}
 .btn.mini,.btn-secundario.mini{padding:6px 10px;font-size:12px;}
 .btn:disabled{opacity:.6;cursor:not-allowed;}
-.resumo-topo{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px;}
-.bloco{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;}
-.bloco.alerta{border-color:var(--warn-text);}
-.bloco .rot{color:var(--dim2);font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;}
-.bloco .val{font-family:var(--serif);font-size:26px;margin-top:8px;}
+/* ---- Cards de resumo — mesmo padrão do ERP Gefoscal (resumo-topo/.bloco):
+   respiro maior, hover sutil, barra de destaque encostada na borda quando
+   o número pede atenção (bom/alerta), em vez de só mudar a cor do texto. ---- */
+.resumo-topo{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr));gap:12px;margin-bottom:20px;}
+.bloco{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:19px 22px;
+  display:flex;flex-direction:column;justify-content:center;transition:border-color .15s ease,box-shadow .15s ease;}
+.bloco:hover{border-color:var(--dim2);}
+.bloco.destaque{border-color:var(--rust);box-shadow:inset 3px 0 0 var(--rust);}
+.bloco.alerta{border-color:var(--warn-text);box-shadow:inset 3px 0 0 var(--warn-text);}
+.bloco.bom{border-color:var(--good-text);box-shadow:inset 3px 0 0 var(--good-text);}
+.bloco .rot{color:var(--dim2);font-size:10.5px;text-transform:uppercase;letter-spacing:.12em;
+  display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.bloco .val{font-family:var(--serif);font-size:32px;line-height:1.08;margin-top:10px;letter-spacing:-.01em;overflow-wrap:break-word;}
+.bloco .nota{color:var(--dim);font-size:12.5px;margin-top:7px;}
 .bloco.alerta .val{color:var(--warn-text);}
+.bloco.bom .val{color:var(--good-text);}
+@media (max-width:640px){.bloco .val{font-size:24px;}}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;}
 .subabas{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;}
 .subabas button{border:1px solid var(--line2);background:var(--surface2);color:var(--dim);border-radius:20px;padding:8px 16px;font-size:12.5px;font-weight:600;cursor:pointer;}
@@ -173,6 +187,33 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
 .modal h3{margin:0 0 14px;font-size:18px;}
 .recado{margin-top:10px;padding:9px 12px;border:1px solid var(--line2);border-radius:8px;font-size:12.5px;}
 .passo{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border-radius:8px;margin-bottom:6px;font-size:13px;}
+
+/* ---- Dar baixa em compra — mesmo padrão do Financeiro do grupo ---- */
+.ficha{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(190px,100%),1fr));gap:14px 20px;}
+.ficha .item .rot{color:var(--dim2);font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;}
+.ficha .item .val{font-size:13.5px;margin-top:3px;}
+.pag-resumo{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.pag-resumo>div{border:1px solid var(--line);border-radius:9px;padding:12px 14px;min-width:0;}
+.pag-resumo span{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim2);font-weight:700;}
+.pag-resumo b{display:block;font-size:19px;margin-top:5px;overflow-wrap:break-word;}
+.pag-resumo .falta{border-color:var(--warn-text);}
+.pag-resumo .falta b{color:var(--warn-text);}
+.pag-resumo .ok{border-color:var(--good-text);}
+.pag-resumo .ok b{color:var(--good-text);}
+.pag-parcelas{display:flex;flex-direction:column;gap:7px;}
+.pag-parcela{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:13px;}
+.pag-parcela .n{font-weight:700;color:var(--dim2);font-size:11.5px;min-width:26px;}
+.pag-parcela .quanto{font-weight:700;font-variant-numeric:tabular-nums;}
+.pag-parcela .onde{flex:1;min-width:120px;font-size:11.5px;}
+.pag-parcela .acoes-parcela{display:flex;gap:6px;align-items:center;margin-left:auto;}
+.linha-modulo{display:flex;align-items:center;gap:12px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;}
+.linha-modulo .nome{flex:1;}
+.aviso{color:var(--dim2);font-size:12px;margin-top:10px;}
+@media (max-width:620px){
+  .pag-resumo{grid-template-columns:1fr;}
+  .pag-resumo b{font-size:17px;}
+}
+
 #tela-login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
 .login-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:32px;max-width:380px;width:100%;text-align:center;}
 .login-card .icone{width:76px;height:76px;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;}
@@ -191,6 +232,28 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
 .swatch-tema{width:24px;height:24px;border-radius:50%;cursor:pointer;border:2px solid var(--line2);flex:none;padding:0;transition:transform .12s ease,border-color .12s ease;}
 .swatch-tema:hover{transform:scale(1.12);}
 .swatch-tema.ativo{border-color:var(--txt);box-shadow:0 0 0 2px var(--panel),0 0 0 3px var(--txt);}
+
+/* ---- Tablet na faixa 861–1199px (ex.: iPad na horizontal) — mesmo
+   comportamento do ERP Gefoscal: a barra lateral colapsa pra só ícones,
+   liberando espaço pro conteúdo, mas a pessoa pode reabrir na mão pelo
+   botãozinho ao lado da logo — e essa escolha manual é respeitada até
+   girar a tela de novo (aí volta a decidir sozinho pela largura). ---- */
+#btn-colapsar{background:none;border:1px solid var(--line2);color:var(--dim);cursor:pointer;
+  width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none;}
+#btn-colapsar:hover{border-color:var(--rust);color:var(--rust);}
+#btn-colapsar svg{width:16px;height:16px;transition:transform .2s ease;}
+.app.nav-colapsada #btn-colapsar svg{transform:rotate(180deg);}
+.app.nav-colapsada{grid-template-columns:68px 1fr;}
+.app.nav-colapsada .nav{padding:20px 10px;}
+.app.nav-colapsada .nav .logo{justify-content:center;}
+.app.nav-colapsada .nav .logo h1,.app.nav-colapsada .nav .sub,.app.nav-colapsada .nav .grupo-titulo,
+.app.nav-colapsada .nav a span,.app.nav-colapsada .nav .rotulo-nav{display:none;}
+.app.nav-colapsada .nav .cabeca-nav{flex-direction:column;gap:10px;}
+.app.nav-colapsada .nav a{justify-content:center;padding:10px 0;}
+.app.nav-colapsada .nav .rodape-nav button{padding:9px;}
+@media (min-width:861px) and (max-width:1199px){
+  .conteudo{padding:18px clamp(12px,2vw,20px);}
+}
 
 /* =========================================================
    CELULAR/TABLET ESTREITO — um código só, que se reorganiza
@@ -215,6 +278,10 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
   .fundo-nav-mobile{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:999;}
   .fundo-nav-mobile.aberto{display:block;}
   .botao-abrir-menu{display:flex;}
+  .app.nav-colapsada{grid-template-columns:1fr;}
+  #btn-colapsar{display:none!important;}
+  .app.nav-colapsada .nav .logo h1,.app.nav-colapsada .nav .sub,.app.nav-colapsada .nav .grupo-titulo{display:block;}
+  .app.nav-colapsada .nav a span,.app.nav-colapsada .nav .rotulo-nav{display:inline;}
   .conteudo{padding:16px 14px;padding-bottom:max(16px, env(safe-area-inset-bottom));max-width:none;}
   /* tela já estreita por natureza — "Amplo"/"Tela cheia" (que existem
      pra aproveitar monitor grande) não fazem sentido aqui, então o
@@ -334,12 +401,23 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
 
 <div class="app oculto" id="app">
   <nav class="nav">
-    <div class="logo"><div class="icone"><img src="logo-icone.png" alt="Fazenda Ouro Branco" style="width:100%;height:100%;object-fit:contain;"></div><div><h1>Fazenda<br>Ouro Branco</h1></div></div>
+    <div class="cabeca-nav">
+      <div class="logo"><div class="icone"><img src="logo-icone.png" alt="Fazenda Ouro Branco" style="width:100%;height:100%;object-fit:contain;"></div><div><h1>Fazenda<br>Ouro Branco</h1></div></div>
+      <button class="oculto" id="btn-colapsar" title="Recolher/expandir menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+    </div>
     <div class="sub">Confinamento de gado</div>
     <div id="menu"></div>
     <div class="rodape-nav">
-      <button class="btn-secundario mini oculto" id="btn-instalar" style="width:100%;margin-bottom:8px;">📲 Instalar app</button>
-      <button class="btn-secundario mini" id="btn-sair" style="width:100%;">Sair</button>
+      <button class="btn-secundario mini oculto" id="btn-instalar" style="width:100%;margin-bottom:8px;" title="Instalar app">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span class="rotulo-nav">Instalar app</span>
+      </button>
+      <button class="btn-secundario mini" id="btn-sair" style="width:100%;" title="Sair">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <span class="rotulo-nav">Sair</span>
+      </button>
     </div>
   </nav>
   <div class="fundo-nav-mobile" id="fundo-nav-mobile"></div>

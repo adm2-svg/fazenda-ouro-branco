@@ -47,8 +47,8 @@ async function abrirArquivo (caminho) {
   window.open(data.signedUrl, '_blank', 'noopener')
 }
 
-function kpi (rot, val, classe = '') {
-  return `<div class="bloco ${classe}"><div class="rot">${esc(rot)}</div><div class="val">${val}</div></div>`
+function kpi (rot, val, classe = '', nota = '') {
+  return `<div class="bloco ${classe}"><div class="rot">${esc(rot)}</div><div class="val">${val}</div>${nota ? `<div class="nota">${esc(nota)}</div>` : ''}</div>`
 }
 
 // ----- gráficos simples em HTML/CSS (sem lib externa, mesmo espírito
@@ -107,6 +107,36 @@ function graficoDonut (titulo, fatias) {
       <div class="donut-centro"><b>${fmtNum(total, 0)}</b><span>total</span></div>
     </div>
     <div class="legenda-donut">${fatias.map(f => `<span><i style="background:${f.cor};"></i>${esc(f.rotulo)}: ${fmtNum(f.valor, 0)}</span>`).join('')}</div>
+  </div>`
+}
+// linha/área em SVG pra uma grandeza real (kg), não porcentagem — mesmo
+// traço do graficoLinha, mas com eixo Y calculado pelo min/max dos pontos
+function graficoLinhaPeso (titulo, pontos, cor = 'var(--good-text)') {
+  const W = 560, H = 190, PAD_E = 40, PAD_D = 10, PAD_C = 14, PAD_B = 26
+  const largura = W - PAD_E - PAD_D
+  const altura = H - PAD_C - PAD_B
+  if (!pontos.length) return `<div class="cartao-grafico"><h4>${esc(titulo)}</h4><p class="texto-dim2" style="font-size:12.5px;">Sem pesagens suficientes.</p></div>`
+  const valores = pontos.map(p => p.y)
+  const min = Math.min(...valores), max = Math.max(...valores)
+  const folga = Math.max((max - min) * 0.12, 2)
+  const yMin = min - folga, yMax = max + folga
+  const escY = v => PAD_C + altura - ((v - yMin) / (yMax - yMin || 1)) * altura
+  const passoX = pontos.length > 1 ? largura / (pontos.length - 1) : 0
+  const coords = pontos.map((p, i) => [PAD_E + i * passoX, escY(p.y)])
+  const pathLinha = coords.map((c, i) => (i === 0 ? 'M' : 'L') + c[0].toFixed(1) + ',' + c[1].toFixed(1)).join(' ')
+  const pathArea = `${pathLinha} L${coords[coords.length - 1][0].toFixed(1)},${PAD_C + altura} L${coords[0][0].toFixed(1)},${PAD_C + altura} Z`
+  const passoRotulo = Math.max(1, Math.ceil(pontos.length / 6))
+  return `<div class="cartao-grafico"><h4>${esc(titulo)}</h4>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;">
+      <line x1="${PAD_E}" y1="${PAD_C}" x2="${PAD_E}" y2="${PAD_C + altura}" stroke="var(--line2)" stroke-width="1"/>
+      <line x1="${PAD_E}" y1="${PAD_C + altura}" x2="${W - PAD_D}" y2="${PAD_C + altura}" stroke="var(--line2)" stroke-width="1"/>
+      <text x="2" y="${escY(yMax) + 4}" font-size="9" fill="var(--dim2)">${fmtNum(yMax, 0)} kg</text>
+      <text x="2" y="${escY(yMin) + 4}" font-size="9" fill="var(--dim2)">${fmtNum(yMin, 0)} kg</text>
+      <path d="${pathArea}" fill="${cor}" opacity="0.14"></path>
+      <path d="${pathLinha}" fill="none" stroke="${cor}" stroke-width="2"></path>
+      ${coords.map((c, i) => `<circle cx="${c[0].toFixed(1)}" cy="${c[1].toFixed(1)}" r="2.6" fill="${cor}"></circle>`).join('')}
+      ${coords.map((c, i) => i % passoRotulo === 0 ? `<text x="${c[0].toFixed(1)}" y="${H - 6}" font-size="9" fill="var(--dim2)" text-anchor="middle">${esc(pontos[i].xRotulo)}</text>` : '').join('')}
+    </svg>
   </div>`
 }
 // linha/área simples em SVG — pra distribuição cumulativa (sem lib externa)
@@ -223,11 +253,13 @@ const ICONES = {
   relatorios: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>',
   estoque: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="M3.3 7L12 12l8.7-5M12 22V12"/></svg>',
   cadastro: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="13" x2="14" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>',
-  fiscal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h11l5 5v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/></svg>'
+  fiscal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h11l5 5v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/></svg>',
+  mapa: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>'
 }
 const PAGINAS = {
   visao_geral: { nome: 'Visão geral', render: paginaVisaoGeral },
   lotes: { nome: 'Lotes', render: paginaLotes },
+  mapa: { nome: 'Mapa', render: paginaMapa },
   estoque: { nome: 'Estoque', render: paginaEstoque },
   financeiro: { nome: 'Financeiro', render: paginaFinanceiro },
   compras: { nome: 'Compras', render: paginaCompras },
@@ -240,7 +272,7 @@ const PAGINAS = {
 // grupos do menu — só organiza a exibição, item fora da lista cai
 // sozinho em "Outros" (defensivo, nunca some um item por engano)
 const GRUPOS_MENU = [
-  ['Operação', ['lotes', 'estoque']],
+  ['Operação', ['lotes', 'mapa', 'estoque']],
   ['Financeiro', ['financeiro', 'compras', 'notas', 'fiscal', 'relatorios']],
   ['Cadastro', ['contratos', 'cadastro']]
 ]
@@ -297,6 +329,40 @@ function montarMenu () {
   $('#menu').addEventListener('click', () => {
     $('.nav')?.classList.remove('aberto')
     $('#fundo-nav-mobile')?.classList.remove('aberto')
+  })
+
+  ligarColapsoTablet()
+}
+
+// tablet (iPad na horizontal etc.) — mesmo comportamento do ERP: entre
+// 861 e 1199px a barra lateral colapsa sozinha pra ícones, liberando
+// espaço de conteúdo; a pessoa pode reabrir na mão e essa escolha manual
+// vale até a tela girar/mudar de faixa de novo (mesmo padrão de
+// localStorage 'gefoscal-nav-colapsada' do sistema financeiro, adaptado
+// pra chave própria da fazenda)
+const FAIXA_TABLET_NAV = window.matchMedia('(min-width: 861px) and (max-width: 1199px)')
+let lateralNaMao = false
+const prefereNavRecolhida = () => localStorage.getItem('fazenda-nav-colapsada') === '1'
+function aplicarLateral () {
+  const app = $('#app')
+  if (!app) return
+  if (FAIXA_TABLET_NAV.matches) {
+    if (!lateralNaMao) app.classList.add('nav-colapsada')
+  } else {
+    app.classList.toggle('nav-colapsada', prefereNavRecolhida())
+  }
+  $('#btn-colapsar')?.classList.toggle('oculto', !FAIXA_TABLET_NAV.matches)
+}
+function ligarColapsoTablet () {
+  aplicarLateral()
+  FAIXA_TABLET_NAV.addEventListener('change', () => { lateralNaMao = false; aplicarLateral() })
+  $('#btn-colapsar')?.addEventListener('click', () => {
+    const app = $('#app')
+    if (!app) return
+    const vaiRecolher = !app.classList.contains('nav-colapsada')
+    app.classList.toggle('nav-colapsada', vaiRecolher)
+    lateralNaMao = true
+    localStorage.setItem('fazenda-nav-colapsada', vaiRecolher ? '1' : '0')
   })
 }
 function irPara (chave) {
@@ -362,10 +428,10 @@ async function paginaVisaoGeral () {
     <div class="resumo-topo">
       ${kpi('Despesas', 'R$ ' + fmtNum(despesas))}
       ${kpi('Receitas', 'R$ ' + fmtNum(totalReceitas))}
-      ${kpi('Resultado', 'R$ ' + fmtNum(totalReceitas - despesas))}
+      ${kpi('Resultado', 'R$ ' + fmtNum(totalReceitas - despesas), totalReceitas - despesas < 0 ? 'alerta' : 'bom')}
       ${kpi('Animais em confinamento', fmtNum(qtdeAnimais, 0))}
       ${kpi('Lotes ativos', fmtNum(lotesAtivos.length, 0))}
-      ${kpi('Peso médio geral', fmtNum(pesoMedio, 1) + ' kg')}
+      ${kpi('Peso médio geral', fmtNum(pesoMedio || pesoMedioInd, 1) + ' kg', '', totalPesInd ? totalPesInd + ' pesagens individuais' : '')}
     </div>
 
     ${(pendentes.length || vacinasProximas.length) ? `
@@ -414,6 +480,311 @@ async function paginaVisaoGeral () {
 // ==================================================================
 // LOTES  (lista + criar/editar + detalhe com sub-abas)
 // ==================================================================
+// ==================================================================
+// MAPA DA PROPRIEDADE — desenhar os pastos (talhões) uma vez, no
+// satélite, e depois só escolher em qual deles está cada lote. Mesmo
+// componente que o Comercial usa pra marcar a fazenda de um lead (Leaflet
+// + satélite Esri, sem chave nem cartão), só que aqui não tem "fazenda do
+// lead": é uma propriedade só, a Ouro Branco, e o que se desenha vira
+// tabela própria (fazenda_talhao) — sem misturar com o CRM.
+// ==================================================================
+let LEAFLET_PROMESSA = null
+function carregarLeaflet () {
+  if (window.L) return Promise.resolve(window.L)
+  if (LEAFLET_PROMESSA) return LEAFLET_PROMESSA
+  LEAFLET_PROMESSA = new Promise((resolve, reject) => {
+    const css = document.createElement('link')
+    css.rel = 'stylesheet'
+    css.href = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css'
+    document.head.appendChild(css)
+    const js = document.createElement('script')
+    js.src = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js'
+    js.onload = () => resolve(window.L)
+    js.onerror = () => { LEAFLET_PROMESSA = null; reject(new Error('Não consegui carregar o mapa. Confira a internet.')) }
+    document.head.appendChild(js)
+  })
+  return LEAFLET_PROMESSA
+}
+
+// Área do polígono na superfície da Terra, em hectares — fórmula do
+// excesso esférico (a mesma que o Google usa em computeArea). Não dá pra
+// somar como se o mapa fosse plano: 1 grau de longitude vale menos metros
+// que 1 grau de latitude, e o erro cresce com o tamanho do talhão.
+function areaHaDoPoligono (pontos) {
+  if (!pontos || pontos.length < 3) return 0
+  const R = 6378137
+  const rad = g => g * Math.PI / 180
+  let soma = 0
+  for (let i = 0; i < pontos.length; i++) {
+    const a = pontos[i]
+    const b = pontos[(i + 1) % pontos.length]
+    soma += rad(b.lng - a.lng) * (2 + Math.sin(rad(a.lat)) + Math.sin(rad(b.lat)))
+  }
+  return Math.abs(soma * R * R / 2) / 10000
+}
+
+function perimetroKm (pontos) {
+  if (!pontos || pontos.length < 2) return 0
+  const R = 6371
+  const rad = g => g * Math.PI / 180
+  let total = 0
+  for (let i = 0; i < pontos.length; i++) {
+    const a = pontos[i]
+    const b = pontos[(i + 1) % pontos.length]
+    const dLat = rad(b.lat - a.lat)
+    const dLng = rad(b.lng - a.lng)
+    const h = Math.sin(dLat / 2) ** 2 +
+      Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2
+    total += 2 * R * Math.asin(Math.min(1, Math.sqrt(h)))
+  }
+  return total
+}
+
+const CORES_TALHAO = ['#c8a11a', '#4a90d9', '#5fb54a', '#d9534f', '#9b6bd6', '#e07b39', '#2f8f83']
+
+// Quem cuida de gado costuma passar a localização como coordenada
+// ("-12.9, -46.4"), não como endereço — aceitar isso na mesma caixa de
+// busca evita mandar a pessoa procurar onde digita cada coisa.
+function lerCoordenada (texto) {
+  const m = String(texto || '').trim()
+    .match(/^(-?\d{1,3}[.,]\d+)\s*[,; ]\s*(-?\d{1,3}[.,]\d+)$/)
+  if (!m) return null
+  const lat = Number(m[1].replace(',', '.'))
+  const lng = Number(m[2].replace(',', '.'))
+  if (!isFinite(lat) || !isFinite(lng)) return null
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null
+  return { lat, lng }
+}
+
+async function paginaMapa () {
+  $('#subtitulo-pagina').textContent = 'Onde fica cada pasto — desenhe uma vez, depois é só apontar o lote'
+  const area = $('#area')
+  area.innerHTML = `<p class="texto-dim2">carregando o mapa...</p>`
+
+  let L
+  try { L = await carregarLeaflet() } catch (e) {
+    area.innerHTML = `<p class="vazio">${esc(e.message)}</p>`
+    return
+  }
+
+  const [{ data: talhoes0 }, { data: lotesComTalhao }] = await Promise.all([
+    db.from('fazenda_talhao').select('id,nome,tipo,area_ha,poligono,cor').order('criado_em'),
+    db.from('fazenda_lote').select('id,nome,talhao_id,status').not('talhao_id', 'is', null)
+  ])
+  let talhoes = talhoes0 || []
+  const lotesPorTalhao = {}
+  ;(lotesComTalhao || []).forEach(l => {
+    (lotesPorTalhao[l.talhao_id] ||= []).push(l)
+  })
+
+  const editavel = PERFIL.editavel
+
+  area.innerHTML = `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+      <input id="mp-busca" style="flex:1;min-width:180px;"
+        placeholder="cidade mais próxima, ou cole a coordenada (-12.93, -46.41)">
+      <button type="button" class="btn-secundario mini" id="mp-buscar">Buscar</button>
+    </div>
+    <div id="mp-achados" class="oculto" style="margin-bottom:8px;"></div>
+    <div id="mp-mapa" style="height:min(56vh,460px);border-radius:10px;overflow:hidden;
+      border:1px solid var(--line2);background:var(--surface2);"></div>
+    <p class="texto-dim2" style="font-size:11px;margin:6px 0 10px;line-height:1.5;" id="mp-dica">
+      ${editavel ? 'Ande até achar a fazenda no satélite. Pra desenhar um pasto, use o botão abaixo.'
+                 : 'Você está vendo o mapa, mas não tem permissão pra editar.'}</p>
+    ${editavel ? `<div class="acoes" style="margin-bottom:10px;">
+      <button type="button" class="btn-secundario mini" id="mp-desenhar">✏️ Desenhar pasto</button>
+      <button type="button" class="btn-secundario mini oculto" id="mp-fechar-talhao">✓ Fechar pasto</button>
+      <button type="button" class="btn-secundario mini oculto" id="mp-desfazer">↶ Tirar último ponto</button>
+      <button type="button" class="btn-secundario mini oculto" id="mp-cancelar-desenho">Cancelar desenho</button>
+      <span class="texto-dim2" style="font-size:11.5px;" id="mp-medindo"></span>
+    </div>` : ''}
+    <div class="cabeca-secao" style="margin-bottom:4px;">
+      <h3 style="font-size:15px;">Pastos desenhados</h3>
+      <span class="texto-dim2" style="font-size:11.5px;" id="mp-soma"></span>
+    </div>
+    <div id="mp-talhoes" style="margin-bottom:10px;"></div>
+    <div class="recado oculto" id="mp-erro"></div>`
+
+  const q = sel => area.querySelector(sel)
+  const avisar = t => { const e = q('#mp-erro'); e.textContent = t; e.classList.toggle('oculto', !t) }
+
+  const mapa = L.map(q('#mp-mapa'), { zoomControl: true }).setView([-12.9256, -46.9375], 6)
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxNativeZoom: 19, maxZoom: 21, attribution: 'Imagem © Esri, Maxar, Earthstar Geographics'
+  }).addTo(mapa)
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+    maxNativeZoom: 19, maxZoom: 21, opacity: 0.9
+  }).addTo(mapa)
+  setTimeout(() => mapa.invalidateSize(), 60)
+
+  const buscar = async () => {
+    const termo = q('#mp-busca').value.trim()
+    if (!termo) return
+    avisar('')
+    const coord = lerCoordenada(termo)
+    if (coord) { mapa.setView([coord.lat, coord.lng], 16); q('#mp-achados').classList.add('oculto'); return }
+    const btn = q('#mp-buscar')
+    btn.disabled = true; btn.textContent = 'buscando...'
+    try {
+      const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&countrycodes=br&q=' + encodeURIComponent(termo)
+      const r = await fetch(url, { headers: { 'Accept-Language': 'pt-BR' } })
+      const achados = await r.json()
+      const cx = q('#mp-achados')
+      if (!Array.isArray(achados) || !achados.length) {
+        cx.classList.remove('oculto')
+        cx.innerHTML = `<p class="texto-dim2" style="font-size:12px;margin:0;">Não achei esse lugar. Procure a cidade mais próxima e ande no mapa, ou cole a coordenada do GPS.</p>`
+      } else {
+        cx.classList.remove('oculto')
+        cx.innerHTML = achados.map((a, i) => `<button type="button" class="btn-secundario mini" data-achado="${i}"
+            style="display:block;width:100%;text-align:left;margin-bottom:4px;white-space:normal;">${esc(a.display_name)}</button>`).join('')
+        cx.querySelectorAll('[data-achado]').forEach(b => {
+          b.onclick = () => { const a = achados[Number(b.dataset.achado)]; mapa.setView([Number(a.lat), Number(a.lon)], 15); cx.classList.add('oculto') }
+        })
+      }
+    } catch (e) {
+      avisar('A busca não respondeu. Você ainda pode andar no mapa ou colar a coordenada.')
+    }
+    btn.disabled = false; btn.textContent = 'Buscar'
+  }
+  q('#mp-buscar').onclick = buscar
+  q('#mp-busca').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); buscar() } })
+
+  const camadas = {}
+  const desenharTalhoes = () => {
+    Object.values(camadas).forEach(c => mapa.removeLayer(c))
+    talhoes.forEach(t => {
+      const pts = (t.poligono || []).map(p => [p[1], p[0]])
+      if (pts.length < 3) return
+      const poly = L.polygon(pts, { color: t.cor || '#c8a11a', weight: 2, fillOpacity: 0.28 })
+      const quemTaAqui = (lotesPorTalhao[t.id] || []).map(l => l.nome).join(', ')
+      poly.bindTooltip(`${t.nome}${t.tipo ? ' · ' + t.tipo : ''} — ${fmtNum(t.area_ha)} ha${quemTaAqui ? ' · ' + quemTaAqui : ''}`, { sticky: true })
+      poly.addTo(mapa)
+      camadas[t.id] = poly
+    })
+
+    const soma = talhoes.reduce((s, t) => s + Number(t.area_ha || 0), 0)
+    q('#mp-soma').textContent = talhoes.length ? `${talhoes.length} pasto(s) · ${fmtNum(soma)} ha desenhados` : ''
+    q('#mp-talhoes').innerHTML = talhoes.length ? talhoes.map(t => {
+      const lotesAqui = lotesPorTalhao[t.id] || []
+      return `<div class="passo" style="align-items:center;gap:8px;">
+        <span style="width:12px;height:12px;border-radius:3px;flex:none;background:${esc(t.cor || '#c8a11a')};"></span>
+        <span style="flex:1;min-width:0;"><b>${esc(t.nome)}</b>${t.tipo ? ' · ' + esc(t.tipo) : ''}
+          <span class="texto-dim2"> — ${fmtNum(t.area_ha)} ha${lotesAqui.length ? ' · ' + esc(lotesAqui.map(l => l.nome).join(', ')) : ' · vazio'}</span></span>
+        <button type="button" class="btn-secundario mini" data-ir-talhao="${esc(t.id)}" style="padding:2px 8px;">ver</button>
+        ${editavel ? `<button type="button" class="btn-secundario mini" data-apagar-talhao="${esc(t.id)}" style="padding:2px 8px;">✕</button>` : ''}
+      </div>`
+    }).join('') : `<p class="texto-dim2" style="font-size:12px;">Nenhum pasto desenhado ainda.</p>`
+
+    q('#mp-talhoes').querySelectorAll('[data-ir-talhao]').forEach(b => {
+      b.onclick = () => { const c = camadas[b.dataset.irTalhao]; if (c) mapa.fitBounds(c.getBounds(), { padding: [20, 20] }) }
+    })
+    q('#mp-talhoes').querySelectorAll('[data-apagar-talhao]').forEach(b => {
+      b.onclick = async () => {
+        const t = talhoes.find(x => x.id === b.dataset.apagarTalhao)
+        const lotesAqui = lotesPorTalhao[t.id] || []
+        const aviso = lotesAqui.length ? `\n\n${lotesAqui.length} lote(s) estão marcados nesse pasto e vão ficar sem local.` : ''
+        if (!confirm(`Apagar o pasto "${t.nome}"?${aviso}`)) return
+        const { error } = await db.from('fazenda_talhao').delete().eq('id', t.id)
+        if (error) { avisar(error.message); return }
+        if (camadas[t.id]) { mapa.removeLayer(camadas[t.id]); delete camadas[t.id] }
+        talhoes = talhoes.filter(x => x.id !== t.id)
+        desenharTalhoes()
+      }
+    })
+  }
+  desenharTalhoes()
+  if (talhoes.length) {
+    const todos = L.featureGroup(Object.values(camadas))
+    if (Object.values(camadas).length) mapa.fitBounds(todos.getBounds(), { padding: [20, 20] })
+  }
+
+  if (!editavel) return
+
+  let desenhando = false
+  let pontos = []
+  let linha = null
+  let bolinhas = []
+
+  const medir = () => {
+    const el = q('#mp-medindo')
+    if (pontos.length < 3) { el.textContent = pontos.length ? `${pontos.length} ponto(s) — precisa de 3 pra fechar` : 'Clique no mapa pra marcar o primeiro ponto.'; return }
+    el.textContent = `${fmtNum(areaHaDoPoligono(pontos))} ha · ${fmtNum(perimetroKm(pontos), 2)} km de perímetro`
+  }
+  const redesenhar = () => {
+    if (linha) mapa.removeLayer(linha)
+    linha = null
+    if (pontos.length >= 2) {
+      linha = pontos.length >= 3
+        ? L.polygon(pontos.map(p => [p.lat, p.lng]), { color: '#fff', weight: 2, dashArray: '5,5', fillOpacity: 0.18 })
+        : L.polyline(pontos.map(p => [p.lat, p.lng]), { color: '#fff', weight: 2, dashArray: '5,5' })
+      linha.addTo(mapa)
+    }
+    medir()
+  }
+  const limparDesenho = () => {
+    bolinhas.forEach(b => mapa.removeLayer(b)); bolinhas = []
+    if (linha) mapa.removeLayer(linha); linha = null
+    pontos = []
+  }
+  const modoDesenho = ligado => {
+    desenhando = ligado
+    q('#mp-desenhar').classList.toggle('oculto', ligado)
+    q('#mp-fechar-talhao').classList.toggle('oculto', !ligado)
+    q('#mp-desfazer').classList.toggle('oculto', !ligado)
+    q('#mp-cancelar-desenho').classList.toggle('oculto', !ligado)
+    q('#mp-dica').textContent = ligado
+      ? 'Clique em volta do pasto, ponto por ponto. Dá pra arrastar cada bolinha pra ajustar.'
+      : 'Ande até achar a fazenda no satélite. Pra desenhar um pasto, use o botão abaixo.'
+    q('#mp-medindo').textContent = ''
+    if (!ligado) limparDesenho(); else medir()
+  }
+
+  const ICONE_VERTICE = L.divIcon({
+    className: '',
+    html: '<div style="width:16px;height:16px;border-radius:50%;background:#c8a11a;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.6);"></div>',
+    iconSize: [16, 16], iconAnchor: [8, 8]
+  })
+  const porPonto = ll => {
+    const i = pontos.length
+    pontos.push({ lat: ll.lat, lng: ll.lng })
+    const b = L.marker([ll.lat, ll.lng], { icon: ICONE_VERTICE, draggable: true, autoPan: true }).addTo(mapa)
+    b.on('drag', ev => { const p = ev.target.getLatLng(); pontos[i] = { lat: p.lat, lng: p.lng }; redesenhar() })
+    b.on('click', ev => { if (ev.originalEvent) ev.originalEvent.stopPropagation() })
+    bolinhas.push(b)
+    redesenhar()
+  }
+  mapa.on('click', e => { if (desenhando) porPonto(e.latlng) })
+
+  q('#mp-desenhar').onclick = () => modoDesenho(true)
+  q('#mp-cancelar-desenho').onclick = () => modoDesenho(false)
+  q('#mp-desfazer').onclick = () => {
+    if (!pontos.length) return
+    pontos.pop()
+    const b = bolinhas.pop()
+    if (b) mapa.removeLayer(b)
+    redesenhar()
+  }
+  q('#mp-fechar-talhao').onclick = async () => {
+    if (pontos.length < 3) { avisar('Um pasto precisa de pelo menos 3 pontos.'); return }
+    const ha = areaHaDoPoligono(pontos)
+    const nome = prompt(`Nome do pasto (${fmtNum(ha)} ha):`, `Pasto ${talhoes.length + 1}`)
+    if (!nome) return
+    const tipo = prompt('Tipo (pasto, curral, baia... pode deixar em branco):', '') || null
+    avisar('')
+    const { data, error } = await db.from('fazenda_talhao').insert({
+      nome: nome.trim(), tipo: tipo ? tipo.trim() : null,
+      area_ha: Number(ha.toFixed(4)),
+      poligono: pontos.map(p => [Number(p.lng.toFixed(7)), Number(p.lat.toFixed(7))]),
+      cor: CORES_TALHAO[talhoes.length % CORES_TALHAO.length],
+      criado_por: PERFIL.pessoaId
+    }).select('id,nome,tipo,area_ha,poligono,cor').single()
+    if (error) { avisar('Não consegui salvar o pasto: ' + error.message); return }
+    talhoes.push(data)
+    modoDesenho(false)
+    desenharTalhoes()
+  }
+}
+
 async function paginaLotes () {
   $('#subtitulo-pagina').textContent = 'Cada lote é um grupo de animais — dele saem pesagem, trato, sanidade e receita'
   const area = $('#area')
@@ -422,6 +793,7 @@ async function paginaLotes () {
       <button data-sub="lista" class="ativo">Lotes</button>
       <button data-sub="peso">Peso do rebanho</button>
       <button data-sub="individual">Pesagem individual</button>
+      <button data-sub="evolucao">Evolução (GMD)</button>
     </div>
     <div id="sub-lotes"></div>`
   area.querySelectorAll('.subabas button').forEach(b => {
@@ -438,6 +810,138 @@ function abrirSubLotes (sub) {
   if (sub === 'lista') subListaLotes(alvo)
   if (sub === 'peso') subPesoRebanho(alvo)
   if (sub === 'individual') subPesagemIndividual(alvo)
+  if (sub === 'evolucao') subEvolucaoPeso(alvo)
+}
+
+// ----- Evolução de peso / GMD — junta as pesagens do MESMO animal (lote +
+// brinco/S-N) ao longo do tempo. A tabela de pesagem individual guarda uma
+// linha por pesagem; aqui a gente agrupa essas linhas pra achar quanto
+// cada animal ganhou por dia entre uma pesagem e a próxima. Não inventa
+// meta de GMD nenhuma — só mostra o número; perda de peso (GMD negativo)
+// é o único caso marcado como alerta, porque isso nunca é bom sinal,
+// independente da meta de cada fazenda.
+const filtroEvolucao = { lote: '', ordenar: 'gmd_asc' }
+async function subEvolucaoPeso (alvo) {
+  const [{ data: pesagens, error }, { data: lotes }] = await Promise.all([
+    db.from('fazenda_pesagem_individual').select('lote_id,tipo_identificacao,id_brinco,id_sn,peso_kg,data').order('data'),
+    db.from('fazenda_lote').select('id,nome').order('nome')
+  ])
+  if (error) { alvo.innerHTML = `<p class="vazio">${esc(error.message)}</p>`; return }
+
+  const grupos = {}
+  ;(pesagens || []).forEach(p => {
+    const ident = p.id_brinco || p.id_sn
+    if (!ident || !p.data) return
+    const chave = `${p.lote_id || 'sem-lote'}|${ident}`
+    ;(grupos[chave] ||= { lote_id: p.lote_id, ident, tipo: p.tipo_identificacao, historico: [] })
+      .historico.push({ data: p.data, peso: Number(p.peso_kg) })
+  })
+
+  const diasEntre = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 864e5)
+  const nomeLote = id => (lotes || []).find(l => l.id === id)?.nome || 'Sem lote'
+
+  let animais = Object.values(grupos).map(g => {
+    g.historico.sort((a, b) => a.data < b.data ? -1 : 1)
+    const n = g.historico.length
+    const primeira = g.historico[0]
+    const ultima = g.historico[n - 1]
+    const diasTotal = diasEntre(primeira.data, ultima.data)
+    const gmdTotal = n >= 2 && diasTotal > 0 ? (ultima.peso - primeira.peso) / diasTotal : null
+    let gmdRecente = null
+    if (n >= 2) {
+      const penultima = g.historico[n - 2]
+      const diasRecente = diasEntre(penultima.data, ultima.data)
+      if (diasRecente > 0) gmdRecente = (ultima.peso - penultima.peso) / diasRecente
+    }
+    return { ...g, n, primeira, ultima, diasTotal, gmdTotal, gmdRecente, loteNome: nomeLote(g.lote_id) }
+  })
+
+  if (filtroEvolucao.lote) animais = animais.filter(a => a.lote_id === filtroEvolucao.lote)
+
+  const comHistorico = animais.filter(a => a.n >= 2)
+  const gmdMedio = comHistorico.length ? comHistorico.reduce((s, a) => s + a.gmdTotal, 0) / comHistorico.length : null
+  const perdendoPeso = comHistorico.filter(a => a.gmdTotal < 0)
+  const melhorGmd = comHistorico.length ? comHistorico.reduce((m, a) => a.gmdTotal > m.gmdTotal ? a : m) : null
+
+  const ordenadores = {
+    gmd_asc: (a, b) => (a.gmdTotal ?? 999) - (b.gmdTotal ?? 999),
+    gmd_desc: (a, b) => (b.gmdTotal ?? -999) - (a.gmdTotal ?? -999),
+    ident: (a, b) => a.ident.localeCompare(b.ident)
+  }
+  animais.sort(ordenadores[filtroEvolucao.ordenar] || ordenadores.gmd_asc)
+
+  alvo.innerHTML = `
+    <p class="aviso" style="margin-top:0;">GMD = ganho médio diário entre a primeira e a última pesagem de cada animal
+      (mesmo lote + brinco/S-N). Só entra quem tem <b>2 ou mais pesagens</b> registradas — pesagem única não tem
+      "antes" pra comparar. Perda de peso vem sempre marcada, porque isso nunca é sinal bom, seja qual for a meta da fazenda.</p>
+
+    <div class="resumo-topo">
+      ${kpi('Animais com histórico (2+ pesagens)', fmtNum(comHistorico.length, 0) + ' de ' + fmtNum(animais.length, 0))}
+      ${kpi('GMD médio do rebanho', gmdMedio != null ? fmtNum(gmdMedio, 2) + ' kg/dia' : '—')}
+      ${kpi('Perdendo peso', fmtNum(perdendoPeso.length, 0), perdendoPeso.length > 0 ? 'alerta' : '')}
+      ${kpi('Melhor GMD', melhorGmd ? fmtNum(melhorGmd.gmdTotal, 2) + ' kg/dia' : '—', melhorGmd ? 'bom' : '')}
+    </div>
+
+    <div class="panel" style="padding:16px 18px;margin-bottom:16px;">
+      <div class="filtros">
+        <div class="campo"><label>Lote</label><select id="ev-lote"><option value="">Todos</option>
+          ${(lotes || []).map(l => `<option value="${l.id}" ${filtroEvolucao.lote === l.id ? 'selected' : ''}>${esc(l.nome)}</option>`).join('')}</select></div>
+        <div class="campo"><label>Ordenar por</label><select id="ev-ordenar">
+          <option value="gmd_asc" ${filtroEvolucao.ordenar === 'gmd_asc' ? 'selected' : ''}>Pior GMD primeiro</option>
+          <option value="gmd_desc" ${filtroEvolucao.ordenar === 'gmd_desc' ? 'selected' : ''}>Melhor GMD primeiro</option>
+          <option value="ident" ${filtroEvolucao.ordenar === 'ident' ? 'selected' : ''}>Identificação</option>
+        </select></div>
+      </div>
+    </div>
+
+    <div class="panel" style="padding:0;"><div class="tabela-scroll">
+      <table><thead><tr><th>Identificação</th><th>Lote</th><th class="num">Pesagens</th>
+        <th class="num">Peso inicial → atual</th><th class="num">Dias</th><th class="num">GMD (kg/dia)</th><th></th></tr></thead><tbody>
+        ${animais.slice(0, 500).map(a => `<tr>
+          <td><b>${esc(a.ident)}</b></td>
+          <td class="texto-dim">${esc(a.loteNome)}</td>
+          <td class="num">${a.n}</td>
+          <td class="num">${fmtNum(a.primeira.peso, 1)} → ${fmtNum(a.ultima.peso, 1)} kg</td>
+          <td class="num texto-dim2">${a.n >= 2 ? a.diasTotal : '—'}</td>
+          <td class="num">${a.gmdTotal != null
+            ? `<span class="${a.gmdTotal < 0 ? 'badge-alerta' : ''}">${fmtNum(a.gmdTotal, 2)}</span>`
+            : '<span class="texto-dim2">só 1 pesagem</span>'}</td>
+          <td>${a.n >= 2 ? `<button class="btn-secundario mini" data-ver-evolucao="${esc(a.lote_id || '')}|${esc(a.ident)}">ver</button>` : ''}</td>
+        </tr>`).join('') || `<tr><td colspan="7" class="vazio">Nenhuma pesagem encontrada.</td></tr>`}
+      </tbody></table>
+      ${animais.length > 500 ? `<p class="texto-dim2" style="padding:12px 16px;font-size:11.5px;">Mostrando os primeiros 500 de ${animais.length} — filtre por lote pra ver o resto.</p>` : ''}
+    </div></div>`
+
+  $('#ev-lote').onchange = () => { filtroEvolucao.lote = $('#ev-lote').value; subEvolucaoPeso(alvo) }
+  $('#ev-ordenar').onchange = () => { filtroEvolucao.ordenar = $('#ev-ordenar').value; subEvolucaoPeso(alvo) }
+
+  alvo.querySelectorAll('[data-ver-evolucao]').forEach(b => {
+    b.onclick = () => {
+      const [loteId, ident] = b.dataset.verEvolucao.split('|')
+      const a = animais.find(x => (x.lote_id || '') === loteId && x.ident === ident)
+      if (a) abrirEvolucaoAnimal(a)
+    }
+  })
+}
+
+function abrirEvolucaoAnimal (a) {
+  const fundo = document.createElement('div')
+  fundo.className = 'modal-fundo'
+  const pontos = a.historico.map(h => ({ xRotulo: fmtData(h.data), y: h.peso }))
+  fundo.innerHTML = `<div class="modal">
+    <h3>${esc(a.ident)} <span class="texto-dim2" style="font-size:12.5px;font-weight:400;">— ${esc(a.loteNome)}</span></h3>
+    <div class="resumo-topo">
+      ${kpi('Pesagens', fmtNum(a.n, 0))}
+      ${kpi('Peso inicial', fmtNum(a.primeira.peso, 1) + ' kg')}
+      ${kpi('Peso atual', fmtNum(a.ultima.peso, 1) + ' kg')}
+      ${kpi('GMD total', a.gmdTotal != null ? fmtNum(a.gmdTotal, 2) + ' kg/dia' : '—', a.gmdTotal < 0 ? 'alerta' : 'bom')}
+    </div>
+    ${graficoLinhaPeso('Peso ao longo do tempo', pontos)}
+    <div class="acoes" style="margin-top:14px;"><button class="btn-secundario" id="ea-fechar">Fechar</button></div>
+  </div>`
+  document.body.appendChild(fundo)
+  fundo.querySelector('#ea-fechar').onclick = () => fundo.remove()
+  fundo.onclick = e => { if (e.target === fundo) fundo.remove() }
 }
 
 async function subListaLotes (alvo) {
@@ -813,14 +1317,19 @@ function formPesagemIndividual (registro, aoSalvar) {
   }
 }
 
-function formLote (l, aoSalvar) {
+async function formLote (l, aoSalvar) {
+  const { data: talhoes } = await db.from('fazenda_talhao').select('id,nome,tipo').order('nome')
   const fundo = document.createElement('div')
   fundo.className = 'modal-fundo'
   fundo.innerHTML = `<div class="modal">
     <h3>${l ? 'Editar lote' : 'Novo lote'}</h3>
     <div class="form-grade">
       <div class="campo" style="grid-column:1/-1;"><label>Nome do lote *</label><input id="fl-nome" value="${esc(l?.nome ?? '')}" placeholder="ex: Lote 01 - Nelore"></div>
-      <div class="campo"><label>Pasto</label><input id="fl-pasto" value="${esc(l?.pasto ?? '')}" placeholder="ex: Pasto 08"></div>
+      <div class="campo"><label>Pasto (no mapa)</label><select id="fl-talhao">
+        <option value="">${(talhoes || []).length ? '— nenhum / digitar ao lado —' : '— nenhum pasto desenhado ainda (veja a aba Mapa) —'}</option>
+        ${(talhoes || []).map(t => `<option value="${t.id}" ${l?.talhao_id === t.id ? 'selected' : ''}>${esc(t.nome)}${t.tipo ? ' · ' + esc(t.tipo) : ''}</option>`).join('')}
+      </select></div>
+      <div class="campo"><label>Pasto (texto livre)</label><input id="fl-pasto" value="${esc(l?.pasto ?? '')}" placeholder="ex: Pasto 08"></div>
       <div class="campo"><label>Data de entrada *</label><input type="date" id="fl-data" value="${l?.data_entrada ?? hojeISO()}"></div>
       <div class="campo"><label>Fornecedor</label><input id="fl-fornecedor" value="${esc(l?.fornecedor ?? '')}"></div>
       <div class="campo"><label>Origem</label><input id="fl-origem" value="${esc(l?.origem ?? '')}"></div>
@@ -845,6 +1354,13 @@ function formLote (l, aoSalvar) {
   fundo.querySelector('#fl-fechar').onclick = fechar
   fundo.onclick = e => { if (e.target === fundo) fechar() }
 
+  // escolher um pasto no mapa já preenche o texto livre, pra quem olha
+  // a lista continuar lendo um nome mesmo sem abrir o mapa
+  fundo.querySelector('#fl-talhao').onchange = e => {
+    const op = e.target.selectedOptions[0]
+    if (e.target.value) fundo.querySelector('#fl-pasto').value = op.textContent.split(' · ')[0]
+  }
+
   fundo.querySelector('#fl-salvar').onclick = async () => {
     const el = fundo.querySelector('#fl-recado')
     const aviso = t => { el.textContent = t; el.classList.remove('oculto'); el.style.borderColor = 'var(--warn-text)'; el.style.color = 'var(--warn-text)' }
@@ -855,6 +1371,7 @@ function formLote (l, aoSalvar) {
     const btn = fundo.querySelector('#fl-salvar'); btn.disabled = true; btn.textContent = 'Salvando...'
     const corpo = {
       nome, pasto: fundo.querySelector('#fl-pasto').value.trim() || null,
+      talhao_id: fundo.querySelector('#fl-talhao').value || null,
       data_entrada: fundo.querySelector('#fl-data').value, fornecedor: fundo.querySelector('#fl-fornecedor').value.trim() || null,
       origem: fundo.querySelector('#fl-origem').value.trim() || null, qtde_inicial: qtde,
       peso_medio_entrada: numeroBR(fundo.querySelector('#fl-peso').value),
@@ -907,7 +1424,7 @@ async function paginaLoteDetalhe (loteId) {
       ${kpi('Ganho de peso', ganho ? fmtNum(ganho, 1) + ' kg' : '—')}
       ${kpi('Custo total', 'R$ ' + fmtNum(custoTotal))}
       ${kpi('Receita', 'R$ ' + fmtNum(totalReceita))}
-      ${kpi('Resultado', 'R$ ' + fmtNum(totalReceita - custoTotal), totalReceita - custoTotal < 0 ? 'alerta' : '')}
+      ${kpi('Resultado', 'R$ ' + fmtNum(totalReceita - custoTotal), totalReceita - custoTotal < 0 ? 'alerta' : 'bom')}
     </div>
     <div class="subabas">
       ${[['movimentacoes', 'Movimentações'], ['pesagens', 'Pesagens'], ['trato', 'Trato'], ['sanidade', 'Sanidade'], ['receitas', 'Receitas'], ['notas', 'Notas fiscais']]
@@ -1541,7 +2058,7 @@ async function carregarLancamentos (alvo) {
     <div class="resumo-topo">
       ${kpi('Despesas em ' + nomeMes, 'R$ ' + fmtNum(despesas))}
       ${kpi('Receitas em ' + nomeMes, 'R$ ' + fmtNum(receitas))}
-      ${kpi('Resultado', 'R$ ' + fmtNum(receitas - despesas))}
+      ${kpi('Resultado', 'R$ ' + fmtNum(receitas - despesas), receitas - despesas < 0 ? 'alerta' : 'bom')}
       ${kpi('Despesas pendentes', 'R$ ' + fmtNum(despesasPendentes), despesasPendentes > 0 ? 'alerta' : '')}
     </div>
 
@@ -2209,6 +2726,318 @@ async function subRelatorioAnual (alvo) {
   }
 }
 
+// ----- Dar baixa em pagamento — mesma tela e mesmas funções do banco que
+// o Financeiro do grupo (RPCs saida_registrar_pagamento/saida_estornar_pagamento
+// e a tabela pagamento_saida são compartilhadas: uma baixa dada aqui aparece
+// lá, e vice-versa). Só a tela é nova; o "motor" já existia e já é usado
+// todo dia pelo financeiro/fiscal do Gefoscal. -----
+
+// Quanto ainda falta pagar: o que se deve mais juros, menos desconto,
+// menos o que já entrou.
+function pagSaldo (valorOriginal, parcelas) {
+  const soma = k => (parcelas || []).reduce((s, p) => s + Number(p[k] || 0), 0)
+  const pago = soma('valor')
+  const falta = Number(valorOriginal || 0) + soma('juros_multa') - soma('desconto') - pago
+  return { pago, falta: Math.max(0, Math.round(falta * 100) / 100), juros: soma('juros_multa'), desconto: soma('desconto') }
+}
+
+function ligarMascaraMoeda (input, valorInicial) {
+  const formatar = centavos => (centavos / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  let centavos = Math.round((Number(valorInicial) || 0) * 100)
+  input.type = 'text'
+  input.inputMode = 'decimal'
+  input.value = centavos ? formatar(centavos) : ''
+  const atualizar = () => {
+    const digitos = input.value.replace(/\D/g, '')
+    centavos = digitos ? parseInt(digitos, 10) : 0
+    input.value = centavos ? formatar(centavos) : ''
+    input.setSelectionRange(input.value.length, input.value.length)
+  }
+  input.addEventListener('input', atualizar)
+  input.addEventListener('focus', () => input.setSelectionRange(input.value.length, input.value.length))
+  input.valorEmReais = () => centavos / 100
+}
+
+const campoArquivo = (id, rotulo) => `
+  <div class="campo"><label>${esc(rotulo)}</label>
+    <input type="file" id="${id}" accept=".pdf,.jpg,.jpeg,.png,.xml,.xlsx">
+    <span class="texto-dim2" style="font-size:11px;">PDF, imagem ou XML, até 10 MB</span>
+  </div>`
+
+// Caixinha de motivo — pro estorno. Mexe em dinheiro já lançado, então
+// exige uma frase, igual toda exclusão do sistema.
+function pedirMotivo ({ titulo, texto, rotulo = 'Confirmar', minimo = 10 }) {
+  return new Promise(resolve => {
+    const fundo = document.createElement('div')
+    fundo.className = 'modal-fundo'
+    fundo.innerHTML = `
+      <div class="modal" style="max-width:520px;">
+        <h3>${esc(titulo)}</h3>
+        <p class="texto-dim" style="font-size:13px;">${texto}</p>
+        <div class="campo" style="margin-top:10px;"><label>Motivo${minimo > 0 ? ' *' : ' (opcional)'}</label>
+          <textarea id="pm-motivo" rows="3" placeholder="escreva o que aconteceu"></textarea>
+          <span class="texto-dim2" style="font-size:11px;">${minimo > 0
+            ? `pelo menos ${minimo} caracteres — fica no histórico`
+            : 'fica no histórico'}</span></div>
+        <div class="acoes" style="margin-top:12px;">
+          <button class="btn" id="pm-ok">${esc(rotulo)}</button>
+          <button class="btn-secundario" id="pm-nao">Cancelar</button>
+        </div>
+        <div class="recado oculto" id="pm-recado"></div>
+      </div>`
+    document.body.appendChild(fundo)
+    const q = id => fundo.querySelector(id)
+    const fechar = v => { fundo.remove(); resolve(v) }
+    q('#pm-nao').onclick = () => fechar(null)
+    fundo.onclick = e => { if (e.target === fundo) fechar(null) }
+    q('#pm-ok').onclick = () => {
+      const m = q('#pm-motivo').value.trim()
+      if (m.length < minimo) {
+        const el = q('#pm-recado')
+        el.textContent = `Escreva pelo menos ${minimo} caracteres.`
+        el.classList.remove('oculto')
+        el.style.borderColor = 'var(--warn-text)'; el.style.color = 'var(--warn-text)'
+        return
+      }
+      fechar(m)
+    }
+    setTimeout(() => q('#pm-motivo').focus(), 30)
+  })
+}
+
+// A tela de pagamento em si — parcial, comprovante por parcela, estorno.
+// `ctx.origem` hoje só chega como 'compra' (o único jeito de dar baixa
+// que a fazenda usa), mas a função é a mesma do grupo pra ficar igual.
+async function telaPagamento (ctx) {
+  const { origem, id, titulo, valorOriginal, contas = [], categorias = [], centros = [] } = ctx
+  const despesas = categorias.filter(c => c.tipo === 'DESPESA' || !c.tipo)
+  const hoje = hojeISO()
+
+  const colunaDono = origem === 'titulo' ? 'titulo_id' : 'compra_id'
+  const carregarParcelas = async () => {
+    const { data } = await db.from('pagamento_saida')
+      .select('id,valor,juros_multa,desconto,pago_em,comprovante_caminho,comprovante_nome,comprovante_link,observacao,criado_em,conta:conta_id(nome)')
+      .eq(colunaDono, id).order('pago_em').order('criado_em')
+    return data || []
+  }
+  let parcelas = await carregarParcelas()
+
+  const fundo = document.createElement('div')
+  fundo.className = 'modal-fundo'
+  document.body.appendChild(fundo)
+  const q = sel => fundo.querySelector(sel)
+  const fechar = () => fundo.remove()
+
+  const desenhar = () => {
+    const { pago, falta } = pagSaldo(valorOriginal, parcelas)
+    const quitado = falta < 0.01
+
+    fundo.innerHTML = `
+      <div class="modal" style="max-width:760px;">
+        <h3>${quitado ? 'Pagamento' : 'Dar baixa'}</h3>
+        <div class="ficha" style="margin-bottom:14px;">
+          ${(ctx.ficha || []).map(([rot, val]) =>
+            `<div class="item"><div class="rot">${esc(rot)}</div><div class="val">${esc(val ?? '—')}</div></div>`).join('')}
+        </div>
+
+        <div class="pag-resumo">
+          <div><span>Valor da conta</span><b>R$ ${fmtNum(valorOriginal)}</b></div>
+          <div><span>Já pago</span><b>R$ ${fmtNum(pago)}</b></div>
+          <div class="${quitado ? 'ok' : 'falta'}"><span>${quitado ? 'Situação' : 'Falta'}</span>
+            <b>${quitado ? 'quitado' : 'R$ ' + fmtNum(falta)}</b></div>
+        </div>
+
+        ${parcelas.length ? `
+          <div class="cabeca-secao" style="margin:18px 0 8px;">
+            <h3 style="font-size:15px;">Pagamentos já feitos</h3>
+            <span class="texto-dim2" style="font-size:12px;">${parcelas.length}x</span>
+          </div>
+          <div class="pag-parcelas">
+            ${parcelas.map((p, i) => `
+              <div class="pag-parcela">
+                <span class="n">${i + 1}ª</span>
+                <span class="quando">${fmtData(p.pago_em)}</span>
+                <span class="quanto">R$ ${fmtNum(p.valor)}</span>
+                <span class="onde texto-dim2">${esc(p.conta?.nome ?? '—')}${
+                  Number(p.juros_multa) ? ' · juros R$ ' + fmtNum(p.juros_multa) : ''}${
+                  Number(p.desconto) ? ' · desc. R$ ' + fmtNum(p.desconto) : ''}</span>
+                <span class="acoes-parcela">
+                  ${p.comprovante_caminho
+                    ? `<button class="btn-secundario mini" data-ver="${esc(p.comprovante_caminho)}">comprovante</button>`
+                    : p.comprovante_link
+                      ? `<a class="btn-secundario mini" href="${esc(p.comprovante_link)}" target="_blank" rel="noopener">comprovante</a>`
+                      : '<span class="texto-dim2" style="font-size:11px;">sem comprovante</span>'}
+                  <button class="btn-secundario mini" data-estornar="${p.id}" title="desfazer este pagamento">estornar</button>
+                </span>
+              </div>`).join('')}
+          </div>` : ''}
+
+        ${quitado ? `
+          <p class="aviso" style="margin-top:16px;">Esta conta está quitada. Pra corrigir um valor,
+          estorne o pagamento errado acima e registre de novo.</p>
+          <div class="acoes"><button class="btn-secundario" id="pg-fechar">Fechar</button></div>`
+        : `
+        <div class="form-grade" style="margin-top:16px;">
+          <div class="campo"><label>Valor pago (R$) *</label>
+            <input id="pg-valor" inputmode="decimal">
+            <span class="texto-dim2" style="font-size:11px;" id="pg-dica"></span></div>
+          <div class="campo"><label>Data do pagamento</label>
+            <input type="date" id="pg-data" value="${hoje}"></div>
+          <div class="campo"><label>Conta de onde saiu</label>
+            <select id="pg-conta"><option value="">—</option>
+              ${contas.map(c => `<option value="${c.id}">${esc(c.nome)}</option>`).join('')}</select></div>
+          <div class="campo"><label>Categoria</label>
+            <select id="pg-categoria"><option value="">—</option>
+              ${despesas.map(c => `<option value="${c.id}">${esc(c.nome)}</option>`).join('')}</select></div>
+          <div class="campo"><label>Centro de custo</label>
+            <select id="pg-centro">${centros.map(c => `<option value="${c.id}">${esc(c.nome)}</option>`).join('')}</select></div>
+          <div class="campo"><label>Juros / multa (R$)</label><input id="pg-juros" inputmode="decimal"></div>
+          <div class="campo"><label>Desconto (R$)</label><input id="pg-desconto" inputmode="decimal"></div>
+          <div class="campo" id="pg-campo-motivo" style="display:none;"><label>Motivo do juros/desconto *</label>
+            <input id="pg-motivo" placeholder="atraso do boleto, devolução de item…"></div>
+          ${campoArquivo('pg-arquivo', 'Anexar comprovante')}
+          <div class="campo"><label>Comprovante (link)</label><input id="pg-link" placeholder="https://..."></div>
+          <div class="campo" style="grid-column:1/-1;"><label>Observação</label>
+            <input id="pg-obs" placeholder="opcional — entra no lançamento"></div>
+        </div>
+
+        <label class="linha-modulo" style="margin-top:12px;">
+          <input type="checkbox" id="pg-lancar" checked>
+          <span class="nome">Gerar lançamento no Financeiro</span></label>
+
+        <div class="acoes" style="margin-top:14px;">
+          <button class="btn" id="pg-confirmar">Registrar pagamento</button>
+          <button class="btn-secundario" id="pg-fechar">Fechar</button>
+        </div>
+        <div class="recado oculto" id="pg-recado"></div>
+        ${ctx.rodape ? `<p class="aviso">${ctx.rodape}</p>` : ''}`}
+      </div>`
+
+    fundo.querySelectorAll('[data-ver]').forEach(b => { b.onclick = () => abrirArquivo(b.dataset.ver) })
+    fundo.querySelectorAll('[data-estornar]').forEach(b => {
+      b.onclick = async () => {
+        const motivo = await pedirMotivo({
+          titulo: 'Estornar pagamento',
+          texto: 'O pagamento some da conta e o lançamento que ele gerou é apagado junto. Fica registrado quem estornou e por quê.',
+          rotulo: 'Estornar'
+        })
+        if (!motivo) return
+        const { error } = await db.rpc('saida_estornar_pagamento', { p_id: b.dataset.estornar, p_motivo: motivo })
+        if (error) { alert(error.message); return }
+        parcelas = await carregarParcelas()
+        desenhar()
+        ctx.aoMudar?.()
+      }
+    })
+    q('#pg-fechar').onclick = () => { fechar(); ctx.aoFechar?.() }
+    if (quitado) return
+
+    const campoValor = q('#pg-valor'); ligarMascaraMoeda(campoValor, falta)
+    const campoJuros = q('#pg-juros'); ligarMascaraMoeda(campoJuros, '')
+    const campoDesc = q('#pg-desconto'); ligarMascaraMoeda(campoDesc, '')
+
+    const atualizarDica = () => {
+      const v = campoValor.valorEmReais()
+      const j = campoJuros.valorEmReais()
+      const d = campoDesc.valorEmReais()
+      const restante = Math.round((falta + j - d - v) * 100) / 100
+      const dica = q('#pg-dica')
+      q('#pg-campo-motivo').style.display = (j > 0 || d > 0) ? '' : 'none'
+      if (!v) { dica.textContent = 'falta R$ ' + fmtNum(falta + j - d); dica.style.color = ''; return }
+      if (restante < -0.01) {
+        dica.textContent = `R$ ${fmtNum(-restante)} a mais do que se deve`
+        dica.style.color = 'var(--warn-text)'
+      } else if (restante < 0.01) {
+        dica.textContent = 'quita a conta'
+        dica.style.color = 'var(--good-text)'
+      } else {
+        dica.textContent = `pagamento parcial — ainda fica faltando R$ ${fmtNum(restante)}`
+        dica.style.color = ''
+      }
+    }
+    ;[campoValor, campoJuros, campoDesc].forEach(c => c.addEventListener('input', atualizarDica))
+    atualizarDica()
+
+    const aviso = t => {
+      const el = q('#pg-recado'); el.textContent = t; el.classList.remove('oculto')
+      el.style.borderColor = 'var(--warn-text)'; el.style.color = 'var(--warn-text)'
+    }
+
+    q('#pg-confirmar').onclick = async () => {
+      const valor = campoValor.valorEmReais()
+      const juros = campoJuros.valorEmReais()
+      const desconto = campoDesc.valorEmReais()
+      const motivo = q('#pg-motivo')?.value.trim() ?? ''
+      if (!valor || valor <= 0) { aviso('Informe o valor pago.'); return }
+      if ((juros > 0 || desconto > 0) && motivo.length < 5) {
+        aviso('Escreva o motivo do juros/multa ou do desconto.'); return
+      }
+      const dataPg = q('#pg-data').value || hoje
+      const btn = q('#pg-confirmar'); btn.disabled = true; btn.textContent = 'Registrando...'
+
+      const competencia = dataPg.slice(0, 7)
+      let comprovante = null
+      try {
+        comprovante = await enviarArquivo(q('#pg-arquivo').files[0], competencia)
+      } catch (e) {
+        aviso(String(e.message ?? e)); btn.disabled = false; btn.textContent = 'Registrar pagamento'; return
+      }
+
+      const { data: res, error } = await db.rpc('saida_registrar_pagamento', {
+        p_origem: origem,
+        p_dono_id: id,
+        p_valor: valor,
+        p_pago_em: dataPg,
+        p_juros: juros,
+        p_desconto: desconto,
+        p_motivo: motivo || null,
+        p_lancar: q('#pg-lancar').checked,
+        p_conta_id: q('#pg-conta').value || null,
+        p_categoria_id: q('#pg-categoria').value || null,
+        p_centro_id: q('#pg-centro').value || null,
+        p_comprovante_caminho: comprovante?.caminho ?? null,
+        p_comprovante_nome: comprovante?.nome ?? null,
+        p_comprovante_link: q('#pg-link').value.trim() || null,
+        p_observacao: q('#pg-obs').value.trim() || null
+      })
+
+      if (error || !res?.ok) {
+        aviso(error?.message || 'O pagamento não foi gravado.')
+        btn.disabled = false; btn.textContent = 'Registrar pagamento'; return
+      }
+
+      ctx.aoMudar?.()
+      if (res.quitado) { fechar(); ctx.aoFechar?.(); return }
+      parcelas = await carregarParcelas()
+      desenhar()
+    }
+  }
+
+  desenhar()
+  fundo.onclick = e => { if (e.target === fundo) { fechar(); ctx.aoFechar?.() } }
+}
+
+// Abre a baixa de uma compra aprovada da fazenda — mesma tela, ficha própria.
+function abrirBaixaCompraFazenda (s, contas, categorias, aoFechar) {
+  if (!s) return
+  telaPagamento({
+    origem: 'compra',
+    id: s.id,
+    titulo: s.produto_servico,
+    valorOriginal: Number(s.valor_aprovado ?? s.valor_estimado ?? 0),
+    contas, categorias,
+    centros: [{ id: FAZENDA_CENTRO_CUSTO_ID, nome: 'Fazenda Ouro Branco' }],
+    ficha: [
+      ['Item', s.produto_servico],
+      ['Fornecedor', s.fornecedor?.nome],
+      ['Solicitante', s.solicitante_nome],
+      ['Vencimento', s.vencimento ? fmtData(s.vencimento) : '—']
+    ],
+    rodape: 'Pagou tudo de uma vez? Só confirmar o valor. Pagou em partes, dá pra ir registrando cada parcela — a conta fecha sozinha quando quitar.',
+    aoFechar
+  })
+}
+
 // ==================================================================
 // COMPRAS  (lê solicitacao_compra filtrado por empresa Fazenda Ouro
 // Branco — pedir aqui bate lá no Gefoscal, e vice-versa, porque é a
@@ -2219,33 +3048,48 @@ async function paginaCompras () {
   const area = $('#area')
   area.innerHTML = `<p class="texto-dim2">carregando...</p>`
 
-  const { data: solic, error } = await db.from('solicitacao_compra').select('*')
-    .eq('empresa_id', FAZENDA_EMPRESA_ID).order('criado_em', { ascending: false }).limit(300)
+  const [{ data: solic, error }, { data: contas }, { data: categorias }] = await Promise.all([
+    db.from('solicitacao_compra').select('*, fornecedor:fornecedor_id(nome)')
+      .eq('empresa_id', FAZENDA_EMPRESA_ID).order('criado_em', { ascending: false }).limit(300),
+    db.from('conta_financeira').select('id,nome').order('nome'),
+    db.from('categoria_financeira').select('id,nome,tipo').order('nome')
+  ])
   if (error) { area.innerHTML = `<p class="vazio">${esc(error.message)}</p>`; return }
   const lista = solic || []
 
   const ROTULO_STATUS = {
     AGUARDANDO_COORD: 'Aguardando coordenação', AGUARDANDO_COTACAO: 'Em cotação', AGUARDANDO_APROVACAO: 'Aguardando aprovação',
-    APROVADA: 'Aprovada', REPROVADA: 'Reprovada', PAGA: 'Paga', RECEBIDA: 'Recebida', CANCELADA: 'Cancelada'
+    APROVADA: 'Aprovada', PARCIAL: 'Pago parcialmente', REPROVADA: 'Reprovada', PAGA: 'Paga', RECEBIDA: 'Recebida', CANCELADA: 'Cancelada'
   }
   const corStatus = s => ['APROVADA', 'RECEBIDA', 'PAGA'].includes(s) ? 'badge-bom' : ['REPROVADA', 'CANCELADA'].includes(s) ? 'badge-alerta' : 'chip'
 
   area.innerHTML = `
     <div class="acoes" style="margin-bottom:16px;"><button class="btn" id="cp-novo">+ Nova solicitação de compra</button></div>
     <div class="panel" style="padding:0;"><div class="tabela-scroll">
-      <table><thead><tr><th>Quando</th><th>Produto/serviço</th><th class="num">Qtde</th><th>Status</th><th class="num">Valor estimado</th><th></th></tr></thead><tbody>
+      <table><thead><tr><th>Quando</th><th>Produto/serviço</th><th class="num">Qtde</th><th>Fornecedor</th><th>Status</th><th class="num">Valor</th><th></th>${PERFIL.editavel ? '<th></th>' : ''}</tr></thead><tbody>
         ${lista.map(s => `<tr>
           <td class="texto-dim2">${fmtQuando(s.criado_em)}</td>
           <td>${esc(s.produto_servico)}</td>
           <td class="num">${s.quantidade ?? '—'} ${esc(s.unidade ?? '')}</td>
-          <td><span class="${corStatus(s.status)}">${esc(ROTULO_STATUS[s.status] ?? s.status)}</span></td>
-          <td class="num">${s.valor_estimado ? 'R$ ' + fmtNum(s.valor_estimado) : '—'}</td>
+          <td class="texto-dim">${esc(s.fornecedor?.nome ?? '—')}</td>
+          <td><span class="${corStatus(s.status)}">${esc(ROTULO_STATUS[s.status] ?? s.status)}</span>${
+            s.status === 'PARCIAL' ? `<div class="texto-dim2" style="font-size:11px;">já pago R$ ${fmtNum(s.valor_pago)}</div>` : ''}</td>
+          <td class="num">${(s.valor_aprovado ?? s.valor_estimado) ? 'R$ ' + fmtNum(s.valor_aprovado ?? s.valor_estimado) : '—'}</td>
           <td>${s.anexo_url ? `<button class="btn-secundario mini" data-abrir-anexo-cp="${esc(s.anexo_url)}">📎</button>` : '—'}</td>
-        </tr>`).join('') || `<tr><td colspan="6" class="vazio">Nenhuma solicitação de compra ainda.</td></tr>`}
+          ${PERFIL.editavel
+            ? `<td>${['APROVADA', 'PARCIAL'].includes(s.status)
+                ? `<button class="btn-secundario mini" data-baixa-cp="${s.id}">${s.status === 'PARCIAL' ? 'pagar mais' : 'dar baixa'}</button>`
+                : ''}</td>`
+            : ''}
+        </tr>`).join('') || `<tr><td colspan="${PERFIL.editavel ? 8 : 7}" class="vazio">Nenhuma solicitação de compra ainda.</td></tr>`}
       </tbody></table>
     </div></div>`
 
   area.querySelectorAll('[data-abrir-anexo-cp]').forEach(b => { b.onclick = () => abrirArquivo(b.dataset.abrirAnexoCp) })
+  area.querySelectorAll('[data-baixa-cp]').forEach(b => {
+    b.onclick = () => abrirBaixaCompraFazenda(
+      lista.find(x => x.id === b.dataset.baixaCp), contas || [], categorias || [], () => paginaCompras())
+  })
   $('#cp-novo').onclick = () => formCompraFazenda(() => paginaCompras())
 }
 
@@ -2482,7 +3326,7 @@ async function paginaRelatorios () {
           ${kpi('Despesas no período', 'R$ ' + fmtNum(totalDespesas))}
           ${kpi('Entradas financeiras', 'R$ ' + fmtNum(totalEntradasFin))}
           ${kpi('Vendas de gado', 'R$ ' + fmtNum(totalVendas))}
-          ${kpi('Resultado', 'R$ ' + fmtNum(totalEntradasFin + totalVendas - totalDespesas))}
+          ${kpi('Resultado', 'R$ ' + fmtNum(totalEntradasFin + totalVendas - totalDespesas), (totalEntradasFin + totalVendas - totalDespesas) < 0 ? 'alerta' : 'bom')}
         </div>
 
         <div class="grade-graficos">
