@@ -1315,10 +1315,27 @@ function formNotaFiscal (preset, aoSalvar) {
 // Fazenda Ouro Branco — mesma tabela do Gefoscal, nunca mistura)
 // ==================================================================
 async function paginaFinanceiro () {
-  $('#subtitulo-pagina').textContent = 'Despesas e receitas da fazenda — anexo de comprovante, fornecedor e situação de pagamento'
+  $('#subtitulo-pagina').textContent = 'Despesas e receitas da fazenda — lançamentos do mês e relatório do ano'
   const area = $('#area')
-  area.innerHTML = `<div id="sub-fin"></div>`
-  subLancamentos($('#sub-fin'))
+  area.innerHTML = `
+    <div class="subabas">
+      <button data-sub="lancamentos" class="ativo">Lançamentos</button>
+      <button data-sub="relatorio">Relatório anual</button>
+    </div>
+    <div id="sub-fin"></div>`
+  area.querySelectorAll('.subabas button').forEach(b => {
+    b.onclick = () => {
+      area.querySelectorAll('.subabas button').forEach(x => x.classList.toggle('ativo', x === b))
+      abrirSubFinanceiro(b.dataset.sub)
+    }
+  })
+  abrirSubFinanceiro('lancamentos')
+}
+function abrirSubFinanceiro (sub) {
+  const alvo = $('#sub-fin')
+  alvo.innerHTML = `<p class="texto-dim2">carregando...</p>`
+  if (sub === 'lancamentos') subLancamentos(alvo)
+  if (sub === 'relatorio') subRelatorioAnual(alvo)
 }
 
 // filtro fica fora da função pra sobreviver a re-render (troca de mês/situação/busca)
@@ -1617,6 +1634,461 @@ function formLancamento (registro, aoSalvar) {
     btn.disabled = false; btn.textContent = 'Salvar'
     if (error) { aviso(error.message); return }
     fechar(); aoSalvar()
+  }
+}
+
+// ==================================================================
+// FINANCEIRO › RELATÓRIO ANUAL
+// Mesmo painel do ERP Gefoscal (Financeiro › Relatórios), recortado pra
+// fazenda: ano civil, o que entrou, o que saiu, resultado mês a mês,
+// despesa por categoria, a fazenda dentro do grupo (centro de custo) e
+// quanto o rebanho que está hoje na fazenda precisa render pra empatar
+// e pra bater a meta de retorno.
+//
+// De onde vem cada número:
+//  - entrou  = fazenda_receita (vendas de gado, valor líquido)
+//              + lancamento_financeiro ENTRADA do centro de custo da fazenda
+//  - saiu    = lancamento_financeiro SAIDA efetivado do centro da fazenda;
+//              a categoria "Compra de gado" fica separada como investimento
+//  - rebanho = lotes EM_CONFINAMENTO menos saídas/mortes/vendas, com o
+//              peso da última pesagem individual de cada animal
+//  - meta e rendimento de carcaça ficam em fazenda_parametro_retorno (por ano)
+// A tabela de lançamentos passa de 1.000 linhas e o PostgREST corta em
+// 1.000 sem avisar: tudo aqui é lido em páginas (relBuscarTudo).
+// ==================================================================
+const REL = { ano: new Date().getFullYear(), tabela: false }
+const REL_CATEGORIA_GADO = 'Compra de gado'
+const REL_KG_ARROBA = 15
+const REL_MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
+const REL_MES_LONGO = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
+// verde = entrou, vermelho = saiu — sempre com legenda/rótulo junto
+const REL_RECEITA = 'var(--good-text)'
+const REL_DESPESA = 'var(--critico-text, #d9534f)'
+const REL_GADO = 'var(--gold)'
+// mesma paleta categórica do ERP (já conferida pra daltonismo)
+const REL_PALETA = {
+  clara: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'],
+  escura: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767']
+}
+const relCores = () => document.documentElement.getAttribute('data-tema') === 'claro' ? REL_PALETA.clara : REL_PALETA.escura
+
+const relReais = v => (v < 0 ? '-' : '') + 'R$ ' + fmtNum(Math.abs(v), 0)
+const relReaisCent = v => (v < 0 ? '-' : '') + 'R$ ' + fmtNum(Math.abs(v))
+function relCurto (v) {
+  const a = Math.abs(v); const s = v < 0 ? '-' : ''
+  if (a >= 1e6) return s + (a / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mi'
+  if (a >= 1e3) return s + Math.round(a / 1e3).toLocaleString('pt-BR') + ' mil'
+  return s + fmtNum(a, 0)
+}
+const relVariacao = (atual, base) => base ? (atual - base) / Math.abs(base) * 100 : null
+function relSelo (variacao, subirEhBom = true, curto = false) {
+  if (variacao == null) {
+    return curto
+      ? `<span class="pnl-var neutro" title="não teve valor nessa linha no mesmo período do ano anterior">—</span>`
+      : `<span class="pnl-var neutro">sem base pra comparar</span>`
+  }
+  if (Math.abs(variacao) < 0.05) return `<span class="pnl-var neutro">sem mudança</span>`
+  const sobe = variacao > 0
+  return `<span class="pnl-var ${sobe === subirEhBom ? 'bom' : 'ruim'}">${sobe ? '▲' : '▼'} ${fmtNum(Math.abs(variacao), 1)}%</span>`
+}
+function relSpark (valores, cor) {
+  if (valores.length < 2) return ''
+  const max = Math.max(...valores, 0); const min = Math.min(...valores, 0); const faixa = (max - min) || 1
+  const L = 120; const A = 30
+  const pts = valores.map((v, i) => `${(i / (valores.length - 1) * L).toFixed(1)},${(A - 3 - ((v - min) / faixa) * (A - 6)).toFixed(1)}`).join(' ')
+  return `<svg class="pnl-spark" viewBox="0 0 ${L} ${A}" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+    <polyline points="${pts}" fill="none" stroke="${cor}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"></polyline></svg>`
+}
+function relCartao ({ rotulo, valor, nota, variacao, subirEhBom = true, comparar = true, serie = [], cor = 'var(--dim)', classe = '', comprido = false }) {
+  return `<div class="pnl-cartao ${classe}${comprido ? ' comprido' : ''}">
+    <div class="rot">${esc(rotulo)}</div>
+    <div class="val">${esc(valor)}</div>
+    <div class="linha-var">${comparar ? relSelo(variacao, subirEhBom) : ''}${nota ? `<span class="nota">${esc(nota)}</span>` : ''}</div>
+    ${relSpark(serie, cor)}
+  </div>`
+}
+
+// barras agrupadas por mês: entrou (esq) × saiu (dir, despesa + gado empilhados)
+function relBarrasMeses (serie) {
+  const L = 780; const A = 250; const esq = 64; const dir = 10; const topo = 18; const base = 32
+  const larg = L - esq - dir; const alt = A - topo - base
+  const max = Math.max(1, ...serie.map(s => Math.max(s.entradas, s.despesas + s.gado)))
+  const y = v => topo + alt - (v / max) * alt
+  const fatia = larg / serie.length
+  const bw = Math.max(4, Math.min(18, fatia * 0.3))
+  const rect = (x, v0, v1, cor, titulo) => v1 <= v0 ? '' : `<rect x="${x.toFixed(1)}" y="${y(v1).toFixed(1)}" width="${bw.toFixed(1)}"
+    height="${Math.max(1.5, y(v0) - y(v1)).toFixed(1)}" rx="2" fill="${cor}"><title>${esc(titulo)}</title></rect>`
+  const picoE = Math.max(...serie.map(s => s.entradas)); const picoS = Math.max(...serie.map(s => s.despesas + s.gado))
+  const rotulo = (x, v, cor, pico) => (v > 0 && v === pico) ? `<text x="${(x + bw / 2).toFixed(1)}" y="${(y(v) - 5).toFixed(1)}" font-size="10"
+    font-weight="700" fill="${cor}" text-anchor="middle">${esc(relCurto(v))}</text>` : ''
+  return `<div class="pnl-grafico"><svg viewBox="0 0 ${L} ${A}" class="pnl-svg" role="img" aria-label="O que entrou e o que saiu em cada mês">
+    ${[0, 0.25, 0.5, 0.75, 1].map(g => { const yy = topo + alt - g * alt; return `<line x1="${esq}" y1="${yy}" x2="${L - dir}" y2="${yy}" stroke="var(--line)"></line>
+      <text x="${esq - 8}" y="${yy + 3.5}" font-size="10" fill="var(--dim2)" text-anchor="end">${esc(relCurto(max * g))}</text>` }).join('')}
+    ${serie.map((s, i) => {
+      const xE = esq + fatia * i + fatia / 2 - bw - 1; const xS = esq + fatia * i + fatia / 2 + 1
+      return rect(xE, 0, s.entradas, REL_RECEITA, `${s.rotulo} · entrou ${relReais(s.entradas)}`) +
+        rect(xS, 0, s.despesas, REL_DESPESA, `${s.rotulo} · despesas ${relReais(s.despesas)}`) +
+        rect(xS, s.despesas, s.despesas + s.gado, REL_GADO, `${s.rotulo} · compra de gado ${relReais(s.gado)}`) +
+        rotulo(xE, s.entradas, REL_RECEITA, picoE) + rotulo(xS, s.despesas + s.gado, REL_DESPESA, picoS)
+    }).join('')}
+    ${serie.map((s, i) => `<text x="${(esq + fatia * i + fatia / 2).toFixed(1)}" y="${A - 12}" font-size="10" fill="var(--dim2)" text-anchor="middle">${esc(s.rotulo)}</text>`).join('')}
+  </svg></div>`
+}
+
+// resultado de cada mês em volta do zero: a posição já diz lucro/prejuízo
+function relBarrasResultado (serie) {
+  const L = 780; const A = 248; const esq = 64; const dir = 10; const topo = 18; const base = 48
+  const larg = L - esq - dir; const alt = A - topo - base
+  const valores = serie.map(s => s.entradas - s.despesas - s.gado)
+  const alto = Math.max(0, ...valores); const baixo = Math.min(0, ...valores); const faixa = (alto - baixo) || 1
+  const y = v => topo + (alto - v) / faixa * alt; const yZero = y(0)
+  const fatia = larg / serie.length; const bw = Math.max(6, Math.min(26, fatia * 0.55))
+  return `<div class="pnl-grafico"><svg viewBox="0 0 ${L} ${A}" class="pnl-svg" role="img" aria-label="Resultado de cada mês: entrou menos saiu">
+    <text x="${esq - 8}" y="${(topo + 4).toFixed(1)}" font-size="10" fill="var(--dim2)" text-anchor="end">${esc(relCurto(alto))}</text>
+    <text x="${esq - 8}" y="${(topo + alt).toFixed(1)}" font-size="10" fill="var(--dim2)" text-anchor="end">${esc(relCurto(baixo))}</text>
+    ${serie.map((s, i) => {
+      const v = valores[i]; if (!v) return ''
+      const x = esq + fatia * i + (fatia - bw) / 2; const cor = v >= 0 ? REL_RECEITA : REL_DESPESA
+      return `<rect x="${x.toFixed(1)}" y="${(v >= 0 ? y(v) : yZero).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1.5, Math.abs(yZero - y(v))).toFixed(1)}" rx="2" fill="${cor}"
+        ><title>${esc(s.rotulo)} · ${v >= 0 ? 'sobrou' : 'faltou'} ${relReais(Math.abs(v))}</title></rect>
+        <text x="${(x + bw / 2).toFixed(1)}" y="${(v >= 0 ? y(v) - 5 : y(v) + 12).toFixed(1)}" font-size="9.5" fill="${cor}" font-weight="700" text-anchor="middle">${esc(relCurto(v))}</text>`
+    }).join('')}
+    <line x1="${esq}" y1="${yZero.toFixed(1)}" x2="${L - dir}" y2="${yZero.toFixed(1)}" stroke="var(--dim2)"></line>
+    ${serie.map((s, i) => `<text x="${(esq + fatia * i + fatia / 2).toFixed(1)}" y="${A - 10}" font-size="10" fill="var(--dim2)" text-anchor="middle">${esc(s.rotulo)}</text>`).join('')}
+  </svg></div>`
+}
+
+function relRosca (fatias, cores, tamanho = 168) {
+  const total = fatias.reduce((s, f) => s + f.valor, 0)
+  if (!total) return ''
+  const raio = tamanho / 2; const esp = raio * 0.38; const r = raio - esp / 2
+  let ang = -90
+  const arcos = fatias.filter(f => f.valor > 0).map((f, i) => {
+    const a = f.valor / total * 360
+    const p = g => `${(raio + r * Math.cos(g * Math.PI / 180)).toFixed(2)} ${(raio + r * Math.sin(g * Math.PI / 180)).toFixed(2)}`
+    const ini = p(ang); ang += Math.min(a, 359.99); const fim = p(ang)
+    return `<path d="M ${ini} A ${r} ${r} 0 ${a > 180 ? 1 : 0} 1 ${fim}" fill="none" stroke="${cores[i % cores.length]}" stroke-width="${esp}"><title>${esc(f.rotulo)} · ${relReais(f.valor)}</title></path>`
+  }).join('')
+  const legenda = fatias.filter(f => f.valor > 0).map((f, i) => `<div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);">
+    <span style="width:9px;height:9px;border-radius:50%;background:${cores[i % cores.length]};display:inline-block;flex:none;"></span>
+    ${esc(f.rotulo)} — ${relReais(f.valor)} (${(f.valor / total * 100).toFixed(0)}%)</div>`).join('')
+  return `<div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;">
+    <svg viewBox="0 0 ${tamanho} ${tamanho}" style="width:${tamanho}px;height:${tamanho}px;flex:none;">${arcos}</svg>
+    <div style="display:flex;flex-direction:column;gap:6px;">${legenda}</div></div>`
+}
+
+// ranking com trilho; `coresAte` = onde a rosca parou (dali pra frente é a cor do "outras")
+function relRanking (itens, antes, cores, coresAte = 6, destaque = null) {
+  if (!itens.length) return `<p class="vazio">Sem despesa no período.</p>`
+  const max = Math.max(...itens.map(x => x.valor), 1); const total = itens.reduce((s, x) => s + x.valor, 0)
+  const comparar = Array.isArray(antes)
+  const base = new Map((antes || []).map(x => [x.nome, x.valor]))
+  const cor = (x, i) => destaque ? (x.nome === destaque ? 'var(--gold)' : 'var(--dim2)') : cores ? cores[Math.min(i, coresAte) % cores.length] : 'var(--rust)'
+  return `<div class="pnl-rank">${itens.map((x, i) => `
+    <div class="pnl-rank-item">
+      <div class="topo">
+        <span class="nome">${cores || destaque ? `<i style="background:${cor(x, i)}"></i>` : ''}${x.nome === destaque ? `<b>${esc(x.nome)}</b>` : esc(x.nome)}</span>
+        <span class="dir"><b>${esc(relReais(x.valor))}</b><span class="texto-dim2">${total ? Math.round(x.valor / total * 100) : 0}%</span>
+          ${comparar ? relSelo(relVariacao(x.valor, base.get(x.nome)), false, true) : ''}</span>
+      </div>
+      <div class="trilho"><span style="width:${Math.max(x.valor / max * 100, 2)}%;background:${cor(x, i)};"></span></div>
+    </div>`).join('')}</div>`
+}
+
+async function relBuscarTudo (montar) {
+  const tam = 1000; let de = 0; const tudo = []
+  for (;;) {
+    const { data, error } = await montar().range(de, de + tam - 1)
+    if (error) throw error
+    tudo.push(...(data || []))
+    if (!data || data.length < tam) return tudo
+    de += tam
+  }
+}
+
+async function relCarregar (ano) {
+  const ini = `${ano}-01-01`; const fim = `${ano}-12-31`
+  const iniA = `${ano - 1}-01-01`; const fimA = `${ano - 1}-12-31`
+  const lancsDe = (a, b) => relBuscarTudo(() => db.from('lancamento_financeiro')
+    .select('id,tipo,valor,situacao,data_lancamento,categoria:categoria_id(nome)')
+    .eq('centro_custo_id', FAZENDA_CENTRO_CUSTO_ID).gte('data_lancamento', a).lte('data_lancamento', b).order('id'))
+  const receitasDe = (a, b) => relBuscarTudo(() => db.from('fazenda_receita')
+    .select('id,data,qtde,valor_liquido,lote_id').gte('data', a).lte('data', b).order('id'))
+  const [lancs, receitas, lancsA, receitasA, grupo, lotes, movs, pesagens, params] = await Promise.all([
+    lancsDe(ini, fim), receitasDe(ini, fim), lancsDe(iniA, fimA), receitasDe(iniA, fimA),
+    // o grupo inteiro; quem não tem o módulo Financeiro só enxerga a fazenda (RLS)
+    relBuscarTudo(() => db.from('lancamento_financeiro').select('id,valor,situacao,centro:centro_custo_id(nome)')
+      .eq('tipo', 'SAIDA').gte('data_lancamento', ini).lte('data_lancamento', fim).order('id')).catch(() => []),
+    relBuscarTudo(() => db.from('fazenda_lote').select('id,qtde_inicial,peso_medio_entrada').eq('status', 'EM_CONFINAMENTO').order('id')),
+    relBuscarTudo(() => db.from('fazenda_movimentacao').select('id,lote_id,tipo_mov,qtde').order('id')),
+    relBuscarTudo(() => db.from('fazenda_pesagem_individual').select('id,id_brinco,id_sn,peso_kg,data')
+      .order('data', { ascending: false }).order('id')),
+    db.from('fazenda_parametro_retorno').select('*').eq('ano', ano).maybeSingle()
+  ])
+  return { lancs, receitas, lancsA, receitasA, grupo, lotes, movs, pesagens, params: params.data || null }
+}
+
+// soma um ano; `ateMes` corta no mesmo mês pra comparar ano com ano de forma justa
+function relSomarAno (lancs, receitas, ateMes = 11) {
+  const mensal = REL_MES.map(() => ({ entradas: 0, despesas: 0, gado: 0 }))
+  const porCategoria = {}; let pendente = 0; let primeiroMesDespesa = null; let qtdLanc = 0; let cabecasVendidas = 0; let vendas = 0; let outras = 0
+  for (const l of lancs) {
+    const m = Number(l.data_lancamento.slice(5, 7)) - 1
+    if (m > ateMes) continue
+    const v = Number(l.valor) || 0
+    if (l.situacao === 'PENDENTE') { if (l.tipo === 'SAIDA') pendente += v; continue }
+    if (l.tipo === 'ENTRADA') { mensal[m].entradas += v; outras += v; continue }
+    qtdLanc++
+    const cat = l.categoria?.nome || 'Sem categoria'
+    if (cat === REL_CATEGORIA_GADO) mensal[m].gado += v
+    else { mensal[m].despesas += v; porCategoria[cat] = (porCategoria[cat] || 0) + v }
+    if (primeiroMesDespesa === null || m < primeiroMesDespesa) primeiroMesDespesa = m
+  }
+  for (const r of receitas) {
+    const m = Number(r.data.slice(5, 7)) - 1
+    if (m > ateMes) continue
+    const v = Number(r.valor_liquido) || 0
+    mensal[m].entradas += v; vendas += v; cabecasVendidas += Number(r.qtde) || 0
+  }
+  const soma = k => mensal.reduce((s, x) => s + x[k], 0)
+  return {
+    mensal, porCategoria, pendente, primeiroMesDespesa, qtdLanc, cabecasVendidas, vendas, outras,
+    entradas: soma('entradas'), despesas: soma('despesas'), gado: soma('gado')
+  }
+}
+
+function relCalcular (ano, d) {
+  const hoje = new Date()
+  const ateMes = ano === hoje.getFullYear() ? hoje.getMonth() : 11
+  const atual = relSomarAno(d.lancs, d.receitas)
+  const anterior = relSomarAno(d.lancsA, d.receitasA, ateMes) // mesmos meses do ano anterior
+  const custo = atual.despesas + atual.gado
+  const resultado = atual.entradas - custo
+
+  const porCentro = {}
+  for (const g of d.grupo) {
+    if (g.situacao === 'PENDENTE') continue
+    const n = g.centro?.nome || 'Sem centro de custo'
+    porCentro[n] = (porCentro[n] || 0) + (Number(g.valor) || 0)
+  }
+
+  // rebanho na fazenda hoje
+  const ativos = new Set(d.lotes.map(l => l.id))
+  let cabecas = d.lotes.reduce((s, l) => s + (Number(l.qtde_inicial) || 0), 0)
+  for (const mv of d.movs) if (ativos.has(mv.lote_id) && ['SAIDA', 'MORTE'].includes(mv.tipo_mov)) cabecas -= Number(mv.qtde) || 0
+  for (const r of d.receitas) if (ativos.has(r.lote_id)) cabecas -= Number(r.qtde) || 0
+  cabecas = Math.max(0, cabecas)
+  // peso: a última pesagem de cada animal (a lista vem da mais nova pra mais antiga)
+  const visto = new Set(); let kg = 0; let pesados = 0; let ultimaPesagem = null
+  for (const p of d.pesagens) {
+    const chave = p.id_brinco ? 'B:' + p.id_brinco : p.id_sn ? 'S:' + p.id_sn : 'I:' + p.id
+    if (visto.has(chave)) continue
+    visto.add(chave); kg += Number(p.peso_kg) || 0; pesados++
+    if (!ultimaPesagem || p.data > ultimaPesagem) ultimaPesagem = p.data
+  }
+  let pesoMedio = pesados ? kg / pesados : 0
+  let origemPeso = pesados ? `média da última pesagem de ${fmtNum(pesados, 0)} animais${ultimaPesagem ? `, a mais recente em ${fmtData(ultimaPesagem)}` : ''}` : ''
+  if (!pesados && d.lotes.length) {
+    const q = d.lotes.reduce((s, l) => s + (Number(l.qtde_inicial) || 0), 0)
+    pesoMedio = q ? d.lotes.reduce((s, l) => s + (Number(l.qtde_inicial) || 0) * (Number(l.peso_medio_entrada) || 0), 0) / q : 0
+    origemPeso = 'peso de entrada dos lotes (ainda não há pesagem individual)'
+  }
+  const margem = Number(d.params?.margem_meta_pct ?? 20)
+  const rendimento = Number(d.params?.rendimento_carcaca_pct ?? 50)
+  const pesoVivo = cabecas * pesoMedio
+  const arrobas = pesoVivo * (rendimento / 100) / REL_KG_ARROBA
+  const alvo = custo * (1 + margem / 100)
+
+  return {
+    ano, ateMes, atual, anterior, custo, resultado,
+    custoA: anterior.despesas + anterior.gado,
+    resultadoA: anterior.entradas - anterior.despesas - anterior.gado,
+    porCentro, cabecas, pesoMedio, origemPeso, pesoVivo, arrobas, margem, rendimento, alvo,
+    faltaEmpate: Math.max(0, custo - atual.entradas),
+    faltaMeta: Math.max(0, alvo - atual.entradas),
+    retorno: custo ? resultado / custo * 100 : null
+  }
+}
+
+async function subRelatorioAnual (alvo) {
+  alvo.innerHTML = `<p class="texto-dim2">montando o relatório...</p>`
+  let r
+  try { r = relCalcular(REL.ano, await relCarregar(REL.ano)) } catch (e) {
+    alvo.innerHTML = `<p class="vazio">Não deu pra montar o relatório: ${esc(e.message || e)}</p>`; return
+  }
+  const a = r.atual
+  const cores = relCores()
+  const serie = a.mensal.map((m, i) => ({ ...m, rotulo: REL_MES[i] + '/' + String(r.ano).slice(2) }))
+  const mesesVermelho = serie.filter((s, i) => i <= r.ateMes && s.entradas - s.despesas - s.gado < 0).length
+  const comprido = [a.entradas, a.despesas, a.gado, r.resultado].some(v => relReais(v).length > 13)
+  const comparaTxt = r.ateMes < 11 ? `jan a ${REL_MES[r.ateMes]} de ${r.ano - 1}` : String(r.ano - 1)
+  // ano anterior sem nenhuma despesa lançada (o sistema começou depois): comparar
+  // resultado e despesa com ele inventaria queda/alta — então não compara
+  const temBaseCusto = r.custoA > 0
+
+  const aviso = a.primeiroMesDespesa === null
+    ? `<p class="aviso pnl-origem" style="border-color:var(--warn-text);"><b>Atenção:</b> não há nenhuma despesa da fazenda lançada em ${r.ano}. O resultado mostra só o que entrou.</p>`
+    : a.primeiroMesDespesa > 0
+      ? `<p class="aviso pnl-origem" style="border-color:var(--warn-text);"><b>Atenção:</b> as despesas da fazenda só estão lançadas a partir de
+        <b>${REL_MES_LONGO[a.primeiroMesDespesa]}/${r.ano}</b>. De janeiro a ${REL_MES_LONGO[a.primeiroMesDespesa - 1]} aparecem só as vendas, sem custo —
+        o resultado desses meses fica melhor do que foi de verdade.</p>` : ''
+
+  const cats = Object.entries(a.porCategoria).map(([nome, valor]) => ({ nome, valor })).sort((x, y) => y.valor - x.valor)
+  const catsA = Object.entries(r.anterior.porCategoria).map(([nome, valor]) => ({ nome, valor }))
+  const top6 = cats.slice(0, 6); const resto = cats.slice(6)
+  const paraRosca = (resto.length ? [...top6, { nome: `outras ${resto.length} categorias`, valor: resto.reduce((s, x) => s + x.valor, 0) }] : top6)
+    .map(x => ({ rotulo: x.nome, valor: x.valor }))
+  const centros = Object.entries(r.porCentro).map(([nome, valor]) => ({ nome, valor })).sort((x, y) => y.valor - x.valor)
+  const totalGrupo = centros.reduce((s, x) => s + x.valor, 0)
+  const faz = r.porCentro['Fazenda Ouro Branco'] || 0
+
+  const porCab = v => r.cabecas ? relReaisCent(v / r.cabecas) : '—'
+  const porArroba = v => r.arrobas ? relReaisCent(v / r.arrobas) : '—'
+  const anosOpc = [0, 1, 2].map(k => new Date().getFullYear() - k)
+
+  alvo.innerHTML = `
+    <div class="filtros pnl-filtros">
+      <button class="btn-secundario mini" id="rel-menos" title="ano anterior">‹</button>
+      <select id="rel-ano">${anosOpc.map(x => `<option ${x === r.ano ? 'selected' : ''}>${x}</option>`).join('')}</select>
+      <button class="btn-secundario mini" id="rel-mais" title="próximo ano" ${r.ano >= new Date().getFullYear() ? 'disabled' : ''}>›</button>
+      <span class="texto-dim2" style="font-size:12px;margin-left:8px;">ano civil · a seta compara com ${esc(comparaTxt)}</span>
+      <button class="btn-secundario mini" id="rel-imprimir" style="margin-left:auto;">Imprimir</button>
+    </div>
+
+    <p class="aviso pnl-origem"><b>De onde vêm os números:</b> o que <b>entrou</b> é a soma das <b>vendas de gado</b> (Receitas, valor líquido)
+      mais as entradas lançadas no Financeiro; o que <b>saiu</b> são os <b>lançamentos de saída já pagos</b> do centro de custo da fazenda,
+      com a <b>compra de gado</b> separada como investimento.</p>
+    ${aviso}
+
+    <div class="pnl-cartoes">
+      ${relCartao({ rotulo: 'Entrou', valor: relReais(a.entradas), comprido,
+        nota: `vendas ${relReais(a.vendas)}${a.outras ? ` + outras ${relReais(a.outras)}` : ''}`,
+        variacao: relVariacao(a.entradas, r.anterior.entradas), subirEhBom: true,
+        serie: serie.slice(0, r.ateMes + 1).map(s => s.entradas), cor: REL_RECEITA })}
+      ${relCartao({ rotulo: 'Despesas da fazenda', valor: relReais(a.despesas), comprido,
+        nota: `${a.qtdLanc} lançamentos · sem a compra de gado`,
+        variacao: temBaseCusto ? relVariacao(a.despesas, r.anterior.despesas) : null, subirEhBom: false,
+        serie: serie.slice(0, r.ateMes + 1).map(s => s.despesas), cor: REL_DESPESA })}
+      ${relCartao({ rotulo: 'Compra de gado', valor: relReais(a.gado), comprido,
+        nota: 'investimento em animais', comparar: false,
+        serie: serie.slice(0, r.ateMes + 1).map(s => s.gado), cor: REL_GADO })}
+      ${relCartao({ rotulo: 'Resultado do ano', valor: relReais(r.resultado), comprido,
+        nota: r.retorno == null ? 'sem custo no período' : `retorno de ${fmtNum(r.retorno, 1)}% sobre o custo`,
+        variacao: temBaseCusto ? relVariacao(r.resultado, r.resultadoA) : null, subirEhBom: true,
+        serie: serie.slice(0, r.ateMes + 1).map(s => s.entradas - s.despesas - s.gado),
+        cor: r.resultado >= 0 ? REL_RECEITA : REL_DESPESA, classe: r.resultado >= 0 ? 'bom' : 'ruim' })}
+      ${a.pendente ? relCartao({ rotulo: 'A pagar (pendente)', valor: relReais(a.pendente), comprido, nota: 'ainda fora do resultado', comparar: false }) : ''}
+    </div>
+
+    <div class="panel pnl-bloco pnl-secao">
+      <div class="cabeca-secao">
+        <h3>Quanto a fazenda precisa render · ${r.ano}</h3>
+        <span class="texto-dim2" style="font-size:12px;">rebanho de hoje × custo lançado no ano</span>
+      </div>
+      <div class="pnl-retorno">
+        <div class="pnl-ret-col">
+          <div class="rot">Para empatar</div>
+          <div class="pnl-ret-lin"><span>Custo no ano</span><b>${relReais(r.custo)}</b></div>
+          <div class="pnl-ret-lin"><span>Já entrou</span><b>${relReais(a.entradas)}</b></div>
+          <div class="pnl-ret-grande ${r.faltaEmpate ? '' : 'bom'}"><span>Falta vender</span><b>${r.faltaEmpate ? relReais(r.faltaEmpate) : 'já empatou'}</b></div>
+          ${r.faltaEmpate ? `<div class="pnl-ret-lin"><span>por cabeça</span><b>${porCab(r.faltaEmpate)}</b></div>
+          <div class="pnl-ret-lin"><span>por arroba</span><b>${porArroba(r.faltaEmpate)}</b></div>` : ''}
+        </div>
+        <div class="pnl-ret-col">
+          <div class="rot">Para bater a meta de ${fmtNum(r.margem, 1)}%</div>
+          <div class="pnl-ret-lin"><span>Precisa entrar</span><b>${relReais(r.alvo)}</b></div>
+          <div class="pnl-ret-lin"><span>Já entrou</span><b>${relReais(a.entradas)}</b></div>
+          <div class="pnl-ret-grande ${r.faltaMeta ? '' : 'bom'}"><span>Falta vender</span><b>${r.faltaMeta ? relReais(r.faltaMeta) : 'meta batida'}</b></div>
+          ${r.faltaMeta ? `<div class="pnl-ret-lin"><span>por cabeça</span><b>${porCab(r.faltaMeta)}</b></div>
+          <div class="pnl-ret-lin"><span>por arroba</span><b>${porArroba(r.faltaMeta)}</b></div>` : ''}
+        </div>
+        <div class="pnl-ret-col">
+          <div class="rot">Rebanho na fazenda hoje</div>
+          <div class="pnl-ret-lin"><span>Cabeças (lotes ativos)</span><b>${fmtNum(r.cabecas, 0)}</b></div>
+          <div class="pnl-ret-lin"><span>Peso médio</span><b>${fmtNum(r.pesoMedio, 1)} kg</b></div>
+          <div class="pnl-ret-lin"><span>Peso vivo total</span><b>${fmtNum(r.pesoVivo, 0)} kg</b></div>
+          <div class="pnl-ret-lin"><span>Arrobas (rend. ${fmtNum(r.rendimento, 0)}%)</span><b>${fmtNum(r.arrobas, 1)} @</b></div>
+        </div>
+      </div>
+      <p class="texto-dim2 pnl-ret-nota">Por cabeça e por arroba é quanto, em média, cada animal que está hoje na fazenda precisa trazer pra cobrir o que falta.
+        Arroba = peso vivo × rendimento de carcaça ÷ 15 kg${r.origemPeso ? ` (peso: ${esc(r.origemPeso)})` : ''}.
+        A meta é retorno sobre o que foi gasto no ano: com ${fmtNum(r.margem, 1)}%, cada R$ 100 gastos precisam voltar R$ ${fmtNum(100 + r.margem, 0)}.
+        O valor do rebanho que continua na fazenda não entra no resultado.</p>
+      ${PERFIL.editavel ? `<div class="filtros pnl-param">
+        <div class="campo"><label>Meta de retorno (%)</label><input id="rel-margem" inputmode="decimal" value="${fmtNum(r.margem, 1)}"></div>
+        <div class="campo"><label>Rendimento de carcaça (%)</label><input id="rel-rend" inputmode="decimal" value="${fmtNum(r.rendimento, 1)}"></div>
+        <button class="btn mini" id="rel-salvar">Salvar para ${r.ano}</button>
+        <span class="texto-dim2" id="rel-msg" style="font-size:12px;"></span>
+      </div>` : ''}
+    </div>
+
+    <div class="panel pnl-bloco pnl-secao">
+      <div class="cabeca-secao">
+        <h3>Entrou e saiu · jan a dez/${String(r.ano).slice(2)}</h3>
+        <span class="pnl-legenda">
+          <span><i style="background:${REL_RECEITA}"></i>entrou</span>
+          <span><i style="background:${REL_DESPESA}"></i>despesas</span>
+          <span><i style="background:${REL_GADO}"></i>compra de gado</span>
+          <button class="btn-secundario mini" id="rel-tabela">${REL.tabela ? 'ver gráfico' : 'ver números'}</button>
+        </span>
+      </div>
+      ${REL.tabela ? `<div class="tabela-scroll"><table><thead><tr><th>Mês</th><th class="num">Entrou</th><th class="num">Despesas</th>
+          <th class="num">Compra de gado</th><th class="num">Resultado</th><th class="num">Acumulado</th></tr></thead><tbody>
+        ${(() => { let ac = 0; return serie.map(s => { const v = s.entradas - s.despesas - s.gado; ac += v
+          return `<tr><td>${esc(s.rotulo)}</td><td class="num">${relReais(s.entradas)}</td><td class="num">${relReais(s.despesas)}</td>
+            <td class="num">${relReais(s.gado)}</td><td class="num" style="color:${v >= 0 ? REL_RECEITA : REL_DESPESA};font-weight:700;">${relReais(v)}</td>
+            <td class="num">${relReais(ac)}</td></tr>` }).join('') })()}
+        </tbody><tfoot><tr><th>Total</th><th class="num">${relReais(a.entradas)}</th><th class="num">${relReais(a.despesas)}</th>
+          <th class="num">${relReais(a.gado)}</th><th class="num">${relReais(r.resultado)}</th><th></th></tr></tfoot></table></div>`
+        : relBarrasMeses(serie)}
+    </div>
+
+    <div class="panel pnl-bloco pnl-secao">
+      <div class="cabeca-secao">
+        <h3>Resultado de cada mês</h3>
+        <span class="texto-dim2" style="font-size:12px;">${mesesVermelho ? `${mesesVermelho} de ${r.ateMes + 1} ${mesesVermelho > 1 ? 'meses fecharam' : 'mês fechou'} no vermelho` : 'nenhum mês fechou no vermelho'}</span>
+      </div>
+      ${relBarrasResultado(serie)}
+    </div>
+
+    <div class="panel pnl-bloco pnl-secao">
+      <div class="cabeca-secao">
+        <h3>Para onde foi o dinheiro · despesa por categoria</h3>
+        <span class="texto-dim2" style="font-size:12px;">sem a compra de gado (${esc(relReais(a.gado))})${catsA.length ? ` · a seta compara com ${esc(comparaTxt)}` : ''}</span>
+      </div>
+      ${cats.length ? `<div class="pnl-rosca">${relRosca(paraRosca, cores)}</div>${relRanking(cats, catsA.length ? catsA : null, cores)}` : '<p class="vazio">Nenhuma despesa no ano.</p>'}
+    </div>
+
+    ${centros.length > 1 ? `<div class="panel pnl-bloco pnl-secao">
+      <div class="cabeca-secao">
+        <h3>Centro de custo · gastos do grupo em ${r.ano}</h3>
+        <span class="texto-dim2" style="font-size:12px;">a fazenda é ${totalGrupo ? fmtNum(faz / totalGrupo * 100, 1) : 0}% de ${esc(relReais(totalGrupo))}</span>
+      </div>
+      ${relRanking(centros, null, null, 6, 'Fazenda Ouro Branco')}
+      <p class="texto-dim2 pnl-ret-nota">"Sem centro de custo" é o que foi importado do CIEvolution sem dizer a área — o que é da fazenda já está separado.</p>
+    </div>` : ''}`
+
+  const recarregar = () => subRelatorioAnual(alvo)
+  $('#rel-ano').onchange = e => { REL.ano = Number(e.target.value); recarregar() }
+  $('#rel-menos').onclick = () => { REL.ano--; recarregar() }
+  $('#rel-mais').onclick = () => { REL.ano++; recarregar() }
+  $('#rel-tabela').onclick = () => { REL.tabela = !REL.tabela; recarregar() }
+  $('#rel-imprimir').onclick = () => window.print()
+  if (PERFIL.editavel) {
+    $('#rel-salvar').onclick = async () => {
+      const msg = $('#rel-msg')
+      const margem = numeroBR($('#rel-margem').value)
+      const rend = numeroBR($('#rel-rend').value)
+      if (margem === null || margem < 0) { msg.textContent = 'Meta de retorno inválida.'; return }
+      if (rend === null || rend <= 0 || rend > 100) { msg.textContent = 'Rendimento tem que ficar entre 1 e 100%.'; return }
+      $('#rel-salvar').disabled = true
+      const { error } = await db.from('fazenda_parametro_retorno').upsert({
+        ano: REL.ano, margem_meta_pct: margem, rendimento_carcaca_pct: rend,
+        atualizado_por: PERFIL.pessoaId || null, atualizado_em: new Date().toISOString()
+      })
+      if (error) { $('#rel-salvar').disabled = false; msg.textContent = error.message; return }
+      recarregar()
+    }
   }
 }
 

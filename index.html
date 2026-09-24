@@ -258,6 +258,64 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
   .login-card{padding:18px;}
   .login-card .icone{width:60px;height:60px;}
 }
+/* ---- Financeiro › Relatório anual — mesmo painel do ERP Gefoscal
+   (Financeiro › Relatórios). Só token de tema, nada de cor fixa, pra
+   ficar certo no escuro e no claro. A fazenda não tem --critico-text:
+   cai no vermelho padrão. ---- */
+.pnl-filtros{margin-bottom:14px;align-items:center;gap:9px;flex-wrap:wrap;}
+.pnl-filtros select{font-size:13px;padding:6px 10px;width:auto;}
+.pnl-origem{font-size:12.5px;line-height:1.55;margin:0 0 14px;padding:10px 13px;border:1px solid var(--line2);
+  border-radius:9px;color:var(--dim);background:var(--panel);}
+.pnl-origem b{color:var(--txt);}
+.pnl-cartoes{display:grid;gap:12px;margin-bottom:20px;grid-template-columns:repeat(auto-fit,minmax(min(215px,100%),1fr));}
+.pnl-cartao{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px 10px;min-width:0;overflow:hidden;}
+.pnl-cartao.bom{box-shadow:inset 3px 0 0 var(--good-text);}
+.pnl-cartao.ruim{box-shadow:inset 3px 0 0 var(--critico-text,#d9534f);}
+.pnl-cartao .rot{color:var(--dim2);font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;font-weight:700;}
+.pnl-cartao .val{font-size:26px;line-height:1.15;margin-top:7px;font-weight:600;overflow-wrap:break-word;font-variant-numeric:tabular-nums;}
+.pnl-cartao.comprido .val{font-size:21px;}
+.pnl-cartao .linha-var{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:7px;}
+.pnl-cartao .linha-var .nota{font-size:11.5px;color:var(--dim);}
+.pnl-spark{width:100%;height:30px;margin-top:8px;display:block;opacity:.75;}
+.pnl-var{font-size:11.5px;font-weight:700;white-space:nowrap;}
+.pnl-var.bom{color:var(--good-text);}
+.pnl-var.ruim{color:var(--critico-text,#d9534f);}
+.pnl-var.neutro{color:var(--dim2);font-weight:600;}
+.pnl-bloco{padding:18px;}
+.pnl-secao{margin-bottom:18px;}
+.pnl-bloco .cabeca-secao h3{font-family:var(--serif);font-size:16px;margin:0;}
+.pnl-grafico{overflow-x:auto;overflow-y:hidden;}
+.pnl-svg{width:100%;min-width:600px;height:auto;display:block;}
+.pnl-legenda{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--dim);}
+.pnl-legenda i,.pnl-rank .nome i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:6px;flex:none;}
+.pnl-rank{display:flex;flex-direction:column;gap:11px;margin-top:14px;}
+.pnl-rank-item .topo{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:12.5px;margin-bottom:4px;}
+.pnl-rank-item .topo b{font-variant-numeric:tabular-nums;}
+.pnl-rank-item .trilho{background:var(--surface2);border-radius:5px;height:9px;overflow:hidden;}
+.pnl-rank-item .trilho>span{display:block;height:100%;border-radius:5px;}
+.pnl-rank-item .nome{display:flex;align-items:center;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pnl-rank-item .dir{display:flex;align-items:baseline;gap:8px;white-space:nowrap;flex:none;}
+.pnl-rosca{margin-bottom:6px;}
+.pnl-retorno{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));}
+.pnl-ret-col{background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;}
+.pnl-ret-col .rot{color:var(--dim2);font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:8px;}
+.pnl-ret-lin{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0;color:var(--dim);}
+.pnl-ret-lin b{color:var(--txt);font-variant-numeric:tabular-nums;font-weight:600;}
+.pnl-ret-grande{display:flex;justify-content:space-between;align-items:baseline;gap:10px;border-top:1px solid var(--line);
+  margin:6px 0 4px;padding-top:8px;font-size:13px;font-weight:700;}
+.pnl-ret-grande b{font-size:21px;font-variant-numeric:tabular-nums;}
+.pnl-ret-grande.bom b{color:var(--good-text);font-size:16px;}
+.pnl-ret-nota{font-size:11.5px;line-height:1.5;margin:12px 0 0;}
+.pnl-param{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);align-items:end;}
+.pnl-param .campo{min-width:150px;max-width:190px;}
+@media (max-width:620px){
+  .pnl-cartao .val{font-size:22px;}
+  .pnl-rank-item .topo{flex-wrap:wrap;}
+}
+@media print{
+  .menu,.lateral,.subabas,#rel-imprimir,#rel-tabela,.pnl-param,.pnl-filtros button,.pnl-filtros select{display:none!important;}
+  .pnl-bloco,.pnl-cartao{break-inside:avoid;}
+}
 </style>
 </head>
 <body>
