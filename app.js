@@ -3878,6 +3878,8 @@ const COMPRA_ROTULO_STATUS = {
   APROVADA: 'Aprovada', PARCIAL: 'Pago parcialmente', REPROVADA: 'Reprovada', PAGA: 'Paga', RECEBIDA: 'Recebida', CANCELADA: 'Cancelada'
 }
 const COMPRA_COR_STATUS = s => ['APROVADA', 'RECEBIDA', 'PAGA'].includes(s) ? 'badge-bom' : ['REPROVADA', 'CANCELADA'].includes(s) ? 'badge-alerta' : 'chip'
+const COMPRA_STATUS_APROVADA_OU_ALEM = ['APROVADA', 'PARCIAL', 'PAGA', 'RECEBIDA']
+const COMPRA_OPCOES_FORMA = ['PIX', 'Boleto', 'À vista', 'Transferência (TED/DOC)', 'Cartão', 'Cheque']
 
 // abre impressão limpa de um modal — some com o resto da página e tira o
 // fundo escuro só enquanto imprime, sem precisar de uma página dedicada
@@ -3937,7 +3939,7 @@ async function paginaCompras () {
           <td style="white-space:nowrap;"><div style="display:flex;gap:6px;flex-wrap:wrap;">
             <button class="btn-secundario mini" data-abrir-cp="${s.id}">abrir</button>
             ${s.anexo_url ? `<button class="btn-secundario mini" data-abrir-anexo-cp="${esc(s.anexo_url)}">📎</button>` : ''}
-            ${PERFIL.editavel && ['APROVADA', 'PARCIAL', 'PAGA', 'RECEBIDA'].includes(s.status) ? `<button class="btn-secundario mini" data-imprimir-cp="${s.id}">🖨️</button>` : ''}
+            ${PERFIL.editavel && COMPRA_STATUS_APROVADA_OU_ALEM.includes(s.status) ? `<button class="btn-secundario mini" data-imprimir-cp="${s.id}">🖨️</button>` : ''}
             ${PERFIL.editavel && ['APROVADA', 'PARCIAL'].includes(s.status) ? `<button class="btn-secundario mini" data-pagamento-cp="${s.id}">${s.forma_pagamento ? '💳 editar' : '💳 pagamento'}</button>` : ''}
             ${PERFIL.editavel && ['APROVADA', 'PARCIAL'].includes(s.status) ? `<button class="btn-secundario mini" data-baixa-cp="${s.id}">${s.status === 'PARCIAL' ? 'pagar mais' : 'dar baixa'}</button>` : ''}
             ${PERFIL.editavel && !COMPRA_BLOQUEIA_EXCLUSAO.includes(s.status) ? `<button class="btn-secundario mini" data-excluir-cp="${s.id}" style="color:var(--warn-text);">excluir</button>` : ''}
@@ -3977,12 +3979,19 @@ async function abrirDetalheCompra (s, opts = {}) {
   if (!s) return
   const fundo = document.createElement('div')
   fundo.className = 'modal-fundo'
+  const aprovadaOuAlem = COMPRA_STATUS_APROVADA_OU_ALEM.includes(s.status)
   fundo.innerHTML = `<div class="modal" style="max-width:640px;">
+    <div class="so-imprimir" style="text-align:center;position:relative;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #999;">
+      <img src="logo-icone.png" alt="Fazenda Ouro Branco" style="width:56px;height:56px;object-fit:contain;">
+      <h2 style="margin:4px 0 0;font-size:19px;">Fazenda Ouro Branco</h2>
+      <p style="margin:2px 0 0;font-size:11.5px;color:#555;">Solicitação de Compra${s.numero ? ' Nº ' + esc(s.numero) : ''}</p>
+      ${aprovadaOuAlem ? `<div class="carimbo-aprovado">Aprovado</div>` : ''}
+    </div>
     <div class="cabeca-secao" style="margin-bottom:4px;">
       <h3 style="margin:0;">${esc(s.produto_servico)}</h3>
       <span class="${COMPRA_COR_STATUS(s.status)}">${esc(COMPRA_ROTULO_STATUS[s.status] ?? s.status)}</span>
     </div>
-    ${s.numero ? `<p class="texto-dim2" style="font-size:11.5px;margin:0 0 12px;">Nº ${esc(s.numero)}</p>` : '<div style="margin-bottom:12px;"></div>'}
+    ${s.numero ? `<p class="texto-dim2 nao-imprimir" style="font-size:11.5px;margin:0 0 12px;">Nº ${esc(s.numero)}</p>` : '<div class="nao-imprimir" style="margin-bottom:12px;"></div>'}
     <div class="ficha" id="dc-ficha">
       <div class="item"><div class="rot">Solicitado em</div><div class="val">${fmtQuando(s.criado_em)}</div></div>
       <div class="item"><div class="rot">Urgência</div><div class="val">${s.urgencia === 'URGENTE_4H' ? 'Urgente — 4h' : 'Normal — 5 dias'}</div></div>
@@ -4026,7 +4035,6 @@ function abrirDadosPagamentoCompra (s, aoSalvar) {
   if (!s) return
   const fundo = document.createElement('div')
   fundo.className = 'modal-fundo'
-  const OPCOES_FORMA = ['PIX', 'Boleto', 'Transferência (TED/DOC)', 'Dinheiro', 'Cartão', 'Cheque']
   fundo.innerHTML = `<div class="modal">
     <h3>💳 Dados de pagamento</h3>
     <p class="texto-dim2" style="font-size:12px;margin:-6px 0 14px;">Isso vai direto na mesma solicitação que o Financeiro do Gefoscal enxerga — preenchendo aqui, já avisa a Rose de como e quando pagar.</p>
@@ -4037,7 +4045,7 @@ function abrirDadosPagamentoCompra (s, aoSalvar) {
     <div class="form-grade">
       <div class="campo"><label>Forma de pagamento *</label><select id="dp-forma">
         <option value="">— escolha —</option>
-        ${OPCOES_FORMA.map(f => `<option value="${f}" ${s.forma_pagamento === f ? 'selected' : ''}>${f}</option>`).join('')}
+        ${COMPRA_OPCOES_FORMA.map(f => `<option value="${f}" ${s.forma_pagamento === f ? 'selected' : ''}>${f}</option>`).join('')}
       </select></div>
       <div class="campo"><label>Condição</label><input id="dp-condicao" placeholder="à vista, 30/60/90..." value="${esc(s.condicao_pagamento || '')}"></div>
       <div class="campo"><label>Parcelas</label><input id="dp-parcelas" inputmode="numeric" value="${s.parcelas ?? ''}"></div>
@@ -4103,6 +4111,11 @@ function formCompraFazenda (aoSalvar) {
         <option value="NAO_URGENTE_5D" ${rascunho?.urgencia !== 'URGENTE_4H' ? 'selected' : ''}>Normal — 5 dias</option>
         <option value="URGENTE_4H" ${rascunho?.urgencia === 'URGENTE_4H' ? 'selected' : ''}>Urgente — 4 horas</option></select></div>
       <div class="campo"><label>Valor estimado total (R$)</label><input id="cp-valor" inputmode="decimal" value="${esc(rascunho?.valor ?? '')}"></div>
+      <div class="campo"><label>Forma de pagamento</label><select id="cp-forma">
+        <option value="">— não sei ainda —</option>
+        ${COMPRA_OPCOES_FORMA.map(f => `<option value="${f}" ${rascunho?.forma === f ? 'selected' : ''}>${f}</option>`).join('')}
+      </select></div>
+      <div class="campo"><label>Fornecedor / onde vai comprar</label><input id="cp-fornecedor" placeholder="nome do fornecedor" value="${esc(rascunho?.fornecedor ?? '')}"></div>
       <div class="campo" style="grid-column:span 2;"><label>Local de entrega</label><input id="cp-local" placeholder="Fazenda Ouro Branco" value="${esc(rascunho?.local ?? '')}"></div>
     </div>
     <div class="cabeca-secao" style="margin-top:14px;">
@@ -4145,6 +4158,8 @@ function formCompraFazenda (aoSalvar) {
     const dados = {
       urgencia: fundo.querySelector('#cp-urg').value,
       valor: fundo.querySelector('#cp-valor').value,
+      forma: fundo.querySelector('#cp-forma').value,
+      fornecedor: fundo.querySelector('#cp-fornecedor').value,
       local: fundo.querySelector('#cp-local').value,
       itens: [...fundo.querySelectorAll('.item-cp')].map(div => ({
         produto: div.querySelector('.ci-produto').value,
@@ -4152,7 +4167,7 @@ function formCompraFazenda (aoSalvar) {
         unid: div.querySelector('.ci-unid').value
       }))
     }
-    const temAlgo = dados.valor || dados.local || dados.itens.some(it => it.produto || it.qtd || it.unid)
+    const temAlgo = dados.valor || dados.local || dados.fornecedor || dados.itens.some(it => it.produto || it.qtd || it.unid)
     if (temAlgo) localStorage.setItem(CHAVE_RASCUNHO, JSON.stringify(dados))
     else localStorage.removeItem(CHAVE_RASCUNHO)
   }
@@ -4188,6 +4203,24 @@ function formCompraFazenda (aoSalvar) {
       } catch (e) { aviso('Não deu pra enviar o anexo: ' + e.message); btn.disabled = false; btn.textContent = 'Enviar solicitação'; return }
     }
 
+    // acha o fornecedor pelo nome ou cadastra um novo na hora — melhor-esforço,
+    // se der ruim a solicitação ainda assim segue sem travar por causa disso
+    let fornecedorId = null
+    const nomeFornecedor = fundo.querySelector('#cp-fornecedor').value.trim()
+    if (nomeFornecedor) {
+      try {
+        const { data: existentes } = await db.from('fornecedor').select('id,nome').ilike('nome', nomeFornecedor).limit(1)
+        if (existentes?.length) {
+          fornecedorId = existentes[0].id
+        } else {
+          const { data: novoFornecedor } = await db.from('fornecedor').insert({
+            nome: nomeFornecedor, status: 'ATIVO', eh_prestador_atrelado: false, criado_por: PERFIL.pessoaId
+          }).select('id').single()
+          fornecedorId = novoFornecedor?.id ?? null
+        }
+      } catch { /* cadastro de fornecedor é melhor-esforço — não trava o envio da solicitação */ }
+    }
+
     const resumo = itens.length === 1 ? itens[0].produto_servico : `${itens.length} itens: ${itens.map(i => i.produto_servico).join(', ')}`
     const { data: nova, error } = await db.from('solicitacao_compra').insert({
       produto_servico: resumo.slice(0, 500),
@@ -4196,6 +4229,8 @@ function formCompraFazenda (aoSalvar) {
       anexo_url: anexoUrl, nome_anexo: nomeAnexo,
       urgencia: fundo.querySelector('#cp-urg').value,
       valor_estimado: numeroBR(fundo.querySelector('#cp-valor').value), local_entrega: fundo.querySelector('#cp-local').value.trim() || 'Fazenda Ouro Branco',
+      forma_pagamento: fundo.querySelector('#cp-forma').value || null,
+      fornecedor_id: fornecedorId,
       empresa_id: FAZENDA_EMPRESA_ID, solicitante_id: PERFIL.pessoaId,
       status: 'AGUARDANDO_APROVACAO' // Fazenda não passa por coordenação nem cotação (isso é só de Indústria/P-TEC) — vai direto pro aprovador no WhatsApp
     }).select('id').single()

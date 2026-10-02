@@ -424,6 +424,34 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
   body.imprimindo-modal .imprimir-isto{position:static!important;background:none!important;padding:0!important;display:block!important;inset:auto!important;}
   body.imprimindo-modal .imprimir-isto .modal{box-shadow:none!important;border:none!important;max-height:none!important;overflow:visible!important;max-width:100%!important;}
   body.imprimindo-modal .nao-imprimir{display:none!important;}
+  body.imprimindo-modal .so-imprimir{display:block!important;}
+  body.imprimindo-modal .imprimir-isto,body.imprimindo-modal .imprimir-isto *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}
+  /* no papel sai sempre em tema claro, não importa o tema escolhido na tela —
+     impressão tem que ficar legível e sem gastar a folha toda de tinta escura */
+  body.imprimindo-modal .imprimir-isto{
+    --bg:#f5f3ec; --panel:#ffffff; --surface2:#f0ede3; --line:#ddd8c8; --line2:#c9c3ac;
+    --txt:#241f14; --dim:#5c5540; --dim2:#8a8367;
+    --rust:#a8623a; --gold:#a9820f; --gold-rgb:169,130,15; --good-text:#2f7d51; --good-rgb:47,125,81;
+    --warn-text:#a5680a; --warn-rgb:165,104,10; --hover-bg:#e8e3d4;
+  }
+  /* cor é propriedade herdada: o valor já fica "resolvido" lá no <body> (tema
+     escuro) e os filhos herdam esse valor pronto, não a variável — então só
+     trocar --txt acima não muda nada visualmente. Precisa recalcular a cor
+     de novo aqui dentro, senão o texto sai bege-claro ilegível no papel branco. */
+  body.imprimindo-modal .imprimir-isto,
+  body.imprimindo-modal .imprimir-isto .modal{
+    color:var(--txt)!important;
+  }
+}
+/* papel timbrado + carimbo de aprovado — só aparecem na folha impressa,
+   mantidos escondidos na tela pra não poluir a conferência do dia a dia */
+.so-imprimir{display:none;}
+.carimbo-aprovado{
+  position:absolute;top:-6px;right:6px;
+  border:4px solid #2e7d32;color:#2e7d32;
+  font-weight:800;font-size:20px;letter-spacing:3px;text-transform:uppercase;
+  padding:5px 16px;border-radius:10px;
+  transform:rotate(-10deg);
 }
 </style>
 </head>
