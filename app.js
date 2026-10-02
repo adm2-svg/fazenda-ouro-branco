@@ -3871,6 +3871,29 @@ function abrirBaixaCompraFazenda (s, contas, categorias, aoFechar) {
 // Branco — pedir aqui bate lá no Gefoscal, e vice-versa, porque é a
 // mesma linha da mesma tabela)
 // ==================================================================
+const ROSE_PESSOA_ID = '5c432161-ffe8-4927-b879-424a6be6018e' // Roselei Canova, financeiro do grupo
+const COMPRA_BLOQUEIA_EXCLUSAO = ['APROVADA', 'PARCIAL', 'PAGA', 'RECEBIDA'] // já tem consequência financeira — não deixa excluir
+const COMPRA_ROTULO_STATUS = {
+  AGUARDANDO_COORD: 'Aguardando coordenação', AGUARDANDO_COTACAO: 'Em cotação', AGUARDANDO_APROVACAO: 'Aguardando aprovação',
+  APROVADA: 'Aprovada', PARCIAL: 'Pago parcialmente', REPROVADA: 'Reprovada', PAGA: 'Paga', RECEBIDA: 'Recebida', CANCELADA: 'Cancelada'
+}
+const COMPRA_COR_STATUS = s => ['APROVADA', 'RECEBIDA', 'PAGA'].includes(s) ? 'badge-bom' : ['REPROVADA', 'CANCELADA'].includes(s) ? 'badge-alerta' : 'chip'
+
+// abre impressão limpa de um modal — some com o resto da página e tira o
+// fundo escuro só enquanto imprime, sem precisar de uma página dedicada
+function imprimirModal (fundoEl) {
+  fundoEl.classList.add('imprimir-isto')
+  document.body.classList.add('imprimindo-modal')
+  const limpar = () => {
+    document.body.classList.remove('imprimindo-modal')
+    fundoEl.classList.remove('imprimir-isto')
+    window.removeEventListener('afterprint', limpar)
+  }
+  window.addEventListener('afterprint', limpar)
+  setTimeout(() => window.print(), 50)
+  setTimeout(limpar, 4000)
+}
+
 async function paginaCompras () {
   $('#subtitulo-pagina').textContent = 'Solicitações de compra — sincronizadas com o Compras do Gefoscal'
   const area = $('#area')
@@ -3885,52 +3908,202 @@ async function paginaCompras () {
   if (error) { area.innerHTML = `<p class="vazio">${esc(error.message)}</p>`; return }
   const lista = solic || []
 
-  const ROTULO_STATUS = {
-    AGUARDANDO_COORD: 'Aguardando coordenação', AGUARDANDO_COTACAO: 'Em cotação', AGUARDANDO_APROVACAO: 'Aguardando aprovação',
-    APROVADA: 'Aprovada', PARCIAL: 'Pago parcialmente', REPROVADA: 'Reprovada', PAGA: 'Paga', RECEBIDA: 'Recebida', CANCELADA: 'Cancelada'
-  }
-  const corStatus = s => ['APROVADA', 'RECEBIDA', 'PAGA'].includes(s) ? 'badge-bom' : ['REPROVADA', 'CANCELADA'].includes(s) ? 'badge-alerta' : 'chip'
+  const aguardandoAprov = lista.filter(s => s.status === 'AGUARDANDO_APROVACAO')
+  const aprovSemPagamento = lista.filter(s => ['APROVADA', 'PARCIAL'].includes(s.status) && !s.forma_pagamento)
+  const valorPendente = aprovSemPagamento.reduce((soma, s) => soma + Number(s.valor_aprovado ?? s.valor_estimado ?? 0), 0)
+  const mesAtual = hojeISO().slice(0, 7)
+  const pagasMes = lista.filter(s => ['PAGA', 'RECEBIDA'].includes(s.status) && s.pago_em && String(s.pago_em).slice(0, 7) === mesAtual)
 
   area.innerHTML = `
+    <div class="resumo-topo">
+      ${kpi('Aguardando aprovação', fmtNum(aguardandoAprov.length, 0), aguardandoAprov.length ? 'alerta' : '', '', '⏳')}
+      ${kpi('Aprovadas sem dados de pagamento', fmtNum(aprovSemPagamento.length, 0), aprovSemPagamento.length ? 'alerta' : '', '', '💳')}
+      ${kpi('Valor aprovado pendente', 'R$ ' + fmtNum(valorPendente), '', '', '💸')}
+      ${kpi('Pagas este mês', fmtNum(pagasMes.length, 0), '', '', '✅')}
+    </div>
     <div class="acoes" style="margin-bottom:16px;"><button class="btn" id="cp-novo">+ Nova solicitação de compra</button></div>
     <div class="panel" style="padding:0;"><div class="tabela-scroll">
-      <table><thead><tr><th>Quando</th><th>Produto/serviço</th><th class="num">Qtde</th><th>Fornecedor</th><th>Status</th><th class="num">Valor</th><th></th>${PERFIL.editavel ? '<th></th>' : ''}</tr></thead><tbody>
+      <table><thead><tr><th>Quando</th><th>Produto/serviço</th><th class="num">Qtde</th><th>Fornecedor</th><th>Status</th><th class="num">Valor</th><th></th></tr></thead><tbody>
         ${lista.map(s => `<tr>
           <td class="texto-dim2">${fmtQuando(s.criado_em)}</td>
           <td>${esc(s.produto_servico)}</td>
           <td class="num">${s.quantidade ?? '—'} ${esc(s.unidade ?? '')}</td>
           <td class="texto-dim">${esc(s.fornecedor?.nome ?? '—')}</td>
-          <td><span class="${corStatus(s.status)}">${esc(ROTULO_STATUS[s.status] ?? s.status)}</span>${
-            s.status === 'PARCIAL' ? `<div class="texto-dim2" style="font-size:11px;">já pago R$ ${fmtNum(s.valor_pago)}</div>` : ''}</td>
+          <td><span class="${COMPRA_COR_STATUS(s.status)}">${esc(COMPRA_ROTULO_STATUS[s.status] ?? s.status)}</span>
+            ${s.status === 'PARCIAL' ? `<div class="texto-dim2" style="font-size:11px;">já pago R$ ${fmtNum(s.valor_pago)}</div>` : ''}
+            ${['APROVADA', 'PARCIAL'].includes(s.status) && s.forma_pagamento ? `<div style="font-size:10.5px;color:var(--good-text);margin-top:2px;">💳 ${esc(s.forma_pagamento)}</div>` : ''}
+          </td>
           <td class="num">${(s.valor_aprovado ?? s.valor_estimado) ? 'R$ ' + fmtNum(s.valor_aprovado ?? s.valor_estimado) : '—'}</td>
-          <td>${s.anexo_url ? `<button class="btn-secundario mini" data-abrir-anexo-cp="${esc(s.anexo_url)}">📎</button>` : '—'}</td>
-          ${PERFIL.editavel
-            ? `<td>${['APROVADA', 'PARCIAL'].includes(s.status)
-                ? `<button class="btn-secundario mini" data-baixa-cp="${s.id}">${s.status === 'PARCIAL' ? 'pagar mais' : 'dar baixa'}</button>`
-                : ''}</td>`
-            : ''}
-        </tr>`).join('') || `<tr><td colspan="${PERFIL.editavel ? 8 : 7}" class="vazio">Nenhuma solicitação de compra ainda.</td></tr>`}
+          <td style="white-space:nowrap;"><div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn-secundario mini" data-abrir-cp="${s.id}">abrir</button>
+            ${s.anexo_url ? `<button class="btn-secundario mini" data-abrir-anexo-cp="${esc(s.anexo_url)}">📎</button>` : ''}
+            ${PERFIL.editavel && ['APROVADA', 'PARCIAL', 'PAGA', 'RECEBIDA'].includes(s.status) ? `<button class="btn-secundario mini" data-imprimir-cp="${s.id}">🖨️</button>` : ''}
+            ${PERFIL.editavel && ['APROVADA', 'PARCIAL'].includes(s.status) ? `<button class="btn-secundario mini" data-pagamento-cp="${s.id}">${s.forma_pagamento ? '💳 editar' : '💳 pagamento'}</button>` : ''}
+            ${PERFIL.editavel && ['APROVADA', 'PARCIAL'].includes(s.status) ? `<button class="btn-secundario mini" data-baixa-cp="${s.id}">${s.status === 'PARCIAL' ? 'pagar mais' : 'dar baixa'}</button>` : ''}
+            ${PERFIL.editavel && !COMPRA_BLOQUEIA_EXCLUSAO.includes(s.status) ? `<button class="btn-secundario mini" data-excluir-cp="${s.id}" style="color:var(--warn-text);">excluir</button>` : ''}
+          </div></td>
+        </tr>`).join('') || `<tr><td colspan="7" class="vazio">Nenhuma solicitação de compra ainda.</td></tr>`}
       </tbody></table>
     </div></div>`
 
   area.querySelectorAll('[data-abrir-anexo-cp]').forEach(b => { b.onclick = () => abrirArquivo(b.dataset.abrirAnexoCp) })
+  area.querySelectorAll('[data-abrir-cp]').forEach(b => {
+    b.onclick = () => abrirDetalheCompra(lista.find(x => x.id === b.dataset.abrirCp))
+  })
+  area.querySelectorAll('[data-imprimir-cp]').forEach(b => {
+    b.onclick = () => abrirDetalheCompra(lista.find(x => x.id === b.dataset.imprimirCp), { imprimirAoAbrir: true })
+  })
+  area.querySelectorAll('[data-pagamento-cp]').forEach(b => {
+    b.onclick = () => abrirDadosPagamentoCompra(lista.find(x => x.id === b.dataset.pagamentoCp), () => paginaCompras())
+  })
   area.querySelectorAll('[data-baixa-cp]').forEach(b => {
     b.onclick = () => abrirBaixaCompraFazenda(
       lista.find(x => x.id === b.dataset.baixaCp), contas || [], categorias || [], () => paginaCompras())
   })
+  area.querySelectorAll('[data-excluir-cp]').forEach(b => {
+    b.onclick = async () => {
+      if (!confirm('Excluir essa solicitação de compra? Não dá pra desfazer.')) return
+      const { error: erroExcluir } = await db.from('solicitacao_compra').delete().eq('id', b.dataset.excluirCp)
+      if (erroExcluir) { alert('Não deu pra excluir: ' + erroExcluir.message); return }
+      paginaCompras()
+    }
+  })
   $('#cp-novo').onclick = () => formCompraFazenda(() => paginaCompras())
 }
 
+// ficha completa de uma solicitação — serve tanto pra "abrir" (conferir)
+// quanto de base pra "imprimir" (o que foi pedido/aprovado)
+async function abrirDetalheCompra (s, opts = {}) {
+  if (!s) return
+  const fundo = document.createElement('div')
+  fundo.className = 'modal-fundo'
+  fundo.innerHTML = `<div class="modal" style="max-width:640px;">
+    <div class="cabeca-secao" style="margin-bottom:4px;">
+      <h3 style="margin:0;">${esc(s.produto_servico)}</h3>
+      <span class="${COMPRA_COR_STATUS(s.status)}">${esc(COMPRA_ROTULO_STATUS[s.status] ?? s.status)}</span>
+    </div>
+    ${s.numero ? `<p class="texto-dim2" style="font-size:11.5px;margin:0 0 12px;">Nº ${esc(s.numero)}</p>` : '<div style="margin-bottom:12px;"></div>'}
+    <div class="ficha" id="dc-ficha">
+      <div class="item"><div class="rot">Solicitado em</div><div class="val">${fmtQuando(s.criado_em)}</div></div>
+      <div class="item"><div class="rot">Urgência</div><div class="val">${s.urgencia === 'URGENTE_4H' ? 'Urgente — 4h' : 'Normal — 5 dias'}</div></div>
+      <div class="item"><div class="rot">Local de entrega</div><div class="val">${esc(s.local_entrega ?? '—')}</div></div>
+      <div class="item"><div class="rot">Fornecedor</div><div class="val">${esc(s.fornecedor?.nome ?? '—')}</div></div>
+      <div class="item"><div class="rot">Valor estimado</div><div class="val">${s.valor_estimado ? 'R$ ' + fmtNum(s.valor_estimado) : '—'}</div></div>
+      ${s.valor_aprovado ? `<div class="item"><div class="rot">Valor aprovado</div><div class="val">R$ ${fmtNum(s.valor_aprovado)}</div></div>` : ''}
+      ${s.aprovador_nome ? `<div class="item"><div class="rot">Aprovado por</div><div class="val">${esc(s.aprovador_nome)}</div></div>` : ''}
+      ${s.parecer_aprovacao ? `<div class="item" style="grid-column:1/-1;"><div class="rot">Parecer</div><div class="val">${esc(s.parecer_aprovacao)}</div></div>` : ''}
+      ${s.forma_pagamento ? `<div class="item"><div class="rot">Forma de pagamento</div><div class="val">${esc(s.forma_pagamento)}${s.condicao_pagamento ? ' — ' + esc(s.condicao_pagamento) : ''}</div></div>` : ''}
+      ${s.vencimento ? `<div class="item"><div class="rot">Vencimento</div><div class="val">${fmtData(s.vencimento)}</div></div>` : ''}
+      ${s.dados_pagamento ? `<div class="item" style="grid-column:1/-1;"><div class="rot">Dados de pagamento</div><div class="val">${esc(s.dados_pagamento)}</div></div>` : ''}
+    </div>
+    <div id="dc-itens" style="margin-top:14px;"><p class="texto-dim2" style="font-size:12px;">carregando itens...</p></div>
+    <div class="acoes nao-imprimir" style="margin-top:14px;">
+      ${s.anexo_url ? `<button class="btn-secundario mini" id="dc-anexo">📎 Ver anexo</button>` : ''}
+      <button class="btn-secundario mini" id="dc-imprimir">🖨️ Imprimir</button>
+      <button class="btn-secundario" id="dc-fechar">Fechar</button>
+    </div>
+  </div>`
+  document.body.appendChild(fundo)
+  const fechar = () => fundo.remove()
+  fundo.querySelector('#dc-fechar').onclick = fechar
+  fundo.onclick = e => { if (e.target === fundo) fechar() }
+  if (s.anexo_url) fundo.querySelector('#dc-anexo').onclick = () => abrirArquivo(s.anexo_url)
+  fundo.querySelector('#dc-imprimir').onclick = () => imprimirModal(fundo)
+
+  const { data: itens } = await db.from('solicitacao_compra_item').select('*').eq('solicitacao_id', s.id).order('ordem')
+  const itensEl = fundo.querySelector('#dc-itens')
+  itensEl.innerHTML = itens?.length ? `<table style="width:100%;"><thead><tr><th>Produto/serviço</th><th class="num">Qtde</th><th>Unidade</th></tr></thead><tbody>
+      ${itens.map(it => `<tr><td>${esc(it.produto_servico)}</td><td class="num">${esc(it.quantidade ?? '—')}</td><td>${esc(it.unidade ?? '—')}</td></tr>`).join('')}
+    </tbody></table>` : ''
+
+  if (opts.imprimirAoAbrir) imprimirModal(fundo)
+}
+
+// preenche forma/condição/vencimento/dados de pagamento numa solicitação já
+// aprovada — grava na mesma linha que o Financeiro do Gefoscal já lê, e
+// avisa a Rose pelo sininho de notificação
+function abrirDadosPagamentoCompra (s, aoSalvar) {
+  if (!s) return
+  const fundo = document.createElement('div')
+  fundo.className = 'modal-fundo'
+  const OPCOES_FORMA = ['PIX', 'Boleto', 'Transferência (TED/DOC)', 'Dinheiro', 'Cartão', 'Cheque']
+  fundo.innerHTML = `<div class="modal">
+    <h3>💳 Dados de pagamento</h3>
+    <p class="texto-dim2" style="font-size:12px;margin:-6px 0 14px;">Isso vai direto na mesma solicitação que o Financeiro do Gefoscal enxerga — preenchendo aqui, já avisa a Rose de como e quando pagar.</p>
+    <div class="ficha" style="margin-bottom:14px;">
+      <div class="item"><div class="rot">Item</div><div class="val">${esc(s.produto_servico)}</div></div>
+      <div class="item"><div class="rot">Valor aprovado</div><div class="val">R$ ${fmtNum(s.valor_aprovado ?? s.valor_estimado ?? 0)}</div></div>
+    </div>
+    <div class="form-grade">
+      <div class="campo"><label>Forma de pagamento *</label><select id="dp-forma">
+        <option value="">— escolha —</option>
+        ${OPCOES_FORMA.map(f => `<option value="${f}" ${s.forma_pagamento === f ? 'selected' : ''}>${f}</option>`).join('')}
+      </select></div>
+      <div class="campo"><label>Condição</label><input id="dp-condicao" placeholder="à vista, 30/60/90..." value="${esc(s.condicao_pagamento || '')}"></div>
+      <div class="campo"><label>Parcelas</label><input id="dp-parcelas" inputmode="numeric" value="${s.parcelas ?? ''}"></div>
+      <div class="campo"><label>Vencimento</label><input type="date" id="dp-vencimento" value="${s.vencimento || ''}"></div>
+    </div>
+    <div class="campo" style="margin-top:10px;"><label>Dados de pagamento (chave PIX, banco/agência/conta...)</label>
+      <textarea id="dp-dados" style="min-height:64px;">${esc(s.dados_pagamento || '')}</textarea></div>
+    <div class="acoes" style="margin-top:14px;"><button class="btn" id="dp-enviar">Enviar pro financeiro</button>
+      <button class="btn-secundario" id="dp-fechar">Fechar</button></div>
+    <div class="recado oculto" id="dp-recado"></div>
+  </div>`
+  document.body.appendChild(fundo)
+  const fechar = () => fundo.remove()
+  fundo.querySelector('#dp-fechar').onclick = fechar
+  fundo.onclick = e => { if (e.target === fundo) fechar() }
+
+  fundo.querySelector('#dp-enviar').onclick = async () => {
+    const el = fundo.querySelector('#dp-recado')
+    const aviso = t => { el.textContent = t; el.classList.remove('oculto'); el.style.borderColor = 'var(--warn-text)'; el.style.color = 'var(--warn-text)' }
+    const forma = fundo.querySelector('#dp-forma').value
+    if (!forma) { aviso('Escolha a forma de pagamento.'); return }
+    const btn = fundo.querySelector('#dp-enviar'); btn.disabled = true; btn.textContent = 'Enviando...'
+    const condicao = fundo.querySelector('#dp-condicao').value.trim() || null
+    const parcelasTxt = fundo.querySelector('#dp-parcelas').value.trim()
+    const parcelas = parcelasTxt ? Number(parcelasTxt) : null
+    const vencimento = fundo.querySelector('#dp-vencimento').value || null
+    const dados = fundo.querySelector('#dp-dados').value.trim() || null
+
+    const { error } = await db.from('solicitacao_compra').update({
+      forma_pagamento: forma, condicao_pagamento: condicao, parcelas, vencimento, dados_pagamento: dados
+    }).eq('id', s.id)
+
+    if (error) { aviso(error.message); btn.disabled = false; btn.textContent = 'Enviar pro financeiro'; return }
+
+    try {
+      await db.from('notificacao_pessoal').insert({
+        destinatario_id: ROSE_PESSOA_ID,
+        titulo: 'Dados de pagamento — Fazenda Ouro Branco',
+        mensagem: `${s.produto_servico} — R$ ${fmtNum(s.valor_aprovado ?? s.valor_estimado ?? 0)} via ${forma}${vencimento ? ' (vence ' + fmtData(vencimento) + ')' : ''}`,
+        entidade: 'solicitacao_compra', entidade_id: s.id, lida: false, exige_confirmacao: false
+      })
+    } catch { /* aviso é melhor-esforço — não trava o salvamento dos dados de pagamento */ }
+
+    fechar(); aoSalvar()
+  }
+}
+
 function formCompraFazenda (aoSalvar) {
+  const CHAVE_RASCUNHO = 'fazenda-rascunho-compra'
+  const lerRascunho = () => { try { return JSON.parse(localStorage.getItem(CHAVE_RASCUNHO) || 'null') } catch { return null } }
+  const rascunho = lerRascunho()
+
   const fundo = document.createElement('div')
   fundo.className = 'modal-fundo'
   fundo.innerHTML = `<div class="modal">
     <h3>Nova solicitação de compra</h3>
+    ${rascunho ? `<div class="recado" id="cp-aviso-rascunho" style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+      <span>📝 Recuperei o que você tinha começado a preencher.</span>
+      <button type="button" class="btn-secundario mini" id="cp-descartar-rascunho">Começar do zero</button>
+    </div>` : ''}
     <div class="form-grade">
       <div class="campo"><label>Urgência</label><select id="cp-urg">
-        <option value="NAO_URGENTE_5D">Normal — 5 dias</option><option value="URGENTE_4H">Urgente — 4 horas</option></select></div>
-      <div class="campo"><label>Valor estimado total (R$)</label><input id="cp-valor" inputmode="decimal"></div>
-      <div class="campo" style="grid-column:span 2;"><label>Local de entrega</label><input id="cp-local" placeholder="Fazenda Ouro Branco"></div>
+        <option value="NAO_URGENTE_5D" ${rascunho?.urgencia !== 'URGENTE_4H' ? 'selected' : ''}>Normal — 5 dias</option>
+        <option value="URGENTE_4H" ${rascunho?.urgencia === 'URGENTE_4H' ? 'selected' : ''}>Urgente — 4 horas</option></select></div>
+      <div class="campo"><label>Valor estimado total (R$)</label><input id="cp-valor" inputmode="decimal" value="${esc(rascunho?.valor ?? '')}"></div>
+      <div class="campo" style="grid-column:span 2;"><label>Local de entrega</label><input id="cp-local" placeholder="Fazenda Ouro Branco" value="${esc(rascunho?.local ?? '')}"></div>
     </div>
     <div class="cabeca-secao" style="margin-top:14px;">
       <h4 style="font-size:13px;margin:0;">Produtos/serviços</h4>
@@ -3948,22 +4121,50 @@ function formCompraFazenda (aoSalvar) {
   fundo.querySelector('#cp-fechar').onclick = fechar
   fundo.onclick = e => { if (e.target === fundo) fechar() }
 
-  const linhaItem = () => `<div class="form-grade item-cp" style="margin-bottom:8px;padding:10px;background:var(--surface2);border-radius:8px;">
-    <div class="campo" style="grid-column:span 2;"><label>Produto/serviço *</label><input class="ci-produto"></div>
-    <div class="campo"><label>Qtde</label><input class="ci-qtd"></div>
-    <div class="campo"><label>Unidade</label><input class="ci-unid" placeholder="un, kg, saco..."></div>
+  const linhaItem = it => `<div class="form-grade item-cp" style="margin-bottom:8px;padding:10px;background:var(--surface2);border-radius:8px;">
+    <div class="campo" style="grid-column:span 2;"><label>Produto/serviço *</label><input class="ci-produto" value="${esc(it?.produto ?? '')}"></div>
+    <div class="campo"><label>Qtde</label><input class="ci-qtd" value="${esc(it?.qtd ?? '')}"></div>
+    <div class="campo"><label>Unidade</label><input class="ci-unid" placeholder="un, kg, saco..." value="${esc(it?.unid ?? '')}"></div>
     <button class="btn-secundario mini" type="button" data-remover-item-cp style="align-self:end;">remover</button>
   </div>`
-  const addItem = () => {
+  const addItem = it => {
     const div = document.createElement('div')
-    div.innerHTML = linhaItem()
+    div.innerHTML = linhaItem(it)
     fundo.querySelector('#cp-itens').appendChild(div.firstElementChild)
     fundo.querySelectorAll('[data-remover-item-cp]').forEach(b => {
-      b.onclick = () => { if (fundo.querySelectorAll('.item-cp').length > 1) b.closest('.item-cp').remove() }
+      b.onclick = () => { if (fundo.querySelectorAll('.item-cp').length > 1) { b.closest('.item-cp').remove(); salvarRascunho() } }
     })
   }
-  fundo.querySelector('#cp-add-item').onclick = addItem
-  addItem()
+  fundo.querySelector('#cp-add-item').onclick = () => { addItem(); salvarRascunho() }
+  if (rascunho?.itens?.length) rascunho.itens.forEach(it => addItem(it))
+  else addItem()
+
+  // rascunho: autosalva a cada tecla, só limpa depois de enviar com sucesso
+  // — fechar o modal ou sair pra outra aba não apaga o que já foi digitado
+  const salvarRascunho = () => {
+    const dados = {
+      urgencia: fundo.querySelector('#cp-urg').value,
+      valor: fundo.querySelector('#cp-valor').value,
+      local: fundo.querySelector('#cp-local').value,
+      itens: [...fundo.querySelectorAll('.item-cp')].map(div => ({
+        produto: div.querySelector('.ci-produto').value,
+        qtd: div.querySelector('.ci-qtd').value,
+        unid: div.querySelector('.ci-unid').value
+      }))
+    }
+    const temAlgo = dados.valor || dados.local || dados.itens.some(it => it.produto || it.qtd || it.unid)
+    if (temAlgo) localStorage.setItem(CHAVE_RASCUNHO, JSON.stringify(dados))
+    else localStorage.removeItem(CHAVE_RASCUNHO)
+  }
+  fundo.addEventListener('input', salvarRascunho)
+  fundo.addEventListener('change', salvarRascunho)
+  if (rascunho) {
+    fundo.querySelector('#cp-descartar-rascunho').onclick = () => {
+      localStorage.removeItem(CHAVE_RASCUNHO)
+      fechar()
+      formCompraFazenda(aoSalvar)
+    }
+  }
 
   fundo.querySelector('#cp-salvar').onclick = async () => {
     const el = fundo.querySelector('#cp-recado')
@@ -3996,7 +4197,7 @@ function formCompraFazenda (aoSalvar) {
       urgencia: fundo.querySelector('#cp-urg').value,
       valor_estimado: numeroBR(fundo.querySelector('#cp-valor').value), local_entrega: fundo.querySelector('#cp-local').value.trim() || 'Fazenda Ouro Branco',
       empresa_id: FAZENDA_EMPRESA_ID, solicitante_id: PERFIL.pessoaId,
-      status: 'AGUARDANDO_COTACAO' // Fazenda não passa pela coordenação (isso é só de Indústria/P-TEC) — vai direto pro orçamento
+      status: 'AGUARDANDO_APROVACAO' // Fazenda não passa por coordenação nem cotação (isso é só de Indústria/P-TEC) — vai direto pro aprovador no WhatsApp
     }).select('id').single()
 
     if (!error && nova?.id) {
@@ -4005,6 +4206,7 @@ function formCompraFazenda (aoSalvar) {
 
     btn.disabled = false; btn.textContent = 'Enviar solicitação'
     if (error) { aviso(error.message); return }
+    localStorage.removeItem(CHAVE_RASCUNHO)
     fechar(); aoSalvar()
   }
 }

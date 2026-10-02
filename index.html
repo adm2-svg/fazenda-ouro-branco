@@ -415,6 +415,16 @@ th{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.04e
   .menu,.lateral,.subabas,#rel-imprimir,#rel-tabela,.pnl-param,.pnl-filtros button,.pnl-filtros select{display:none!important;}
   .pnl-bloco,.pnl-cartao{break-inside:avoid;}
 }
+/* imprimir um modal específico (ex: solicitação de compra aprovada) sem
+   imprimir o resto da página junto — imprimirModal() liga essas classes
+   só durante o print e tira logo depois. */
+@media print{
+  body.imprimindo-modal>*:not(.imprimir-isto){display:none!important;}
+  body.imprimindo-modal .modal-fundo:not(.imprimir-isto){display:none!important;}
+  body.imprimindo-modal .imprimir-isto{position:static!important;background:none!important;padding:0!important;display:block!important;inset:auto!important;}
+  body.imprimindo-modal .imprimir-isto .modal{box-shadow:none!important;border:none!important;max-height:none!important;overflow:visible!important;max-width:100%!important;}
+  body.imprimindo-modal .nao-imprimir{display:none!important;}
+}
 </style>
 </head>
 <body>
